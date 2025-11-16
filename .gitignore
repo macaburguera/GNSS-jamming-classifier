@@ -1,0 +1,7 @@
+# Ignore directories named "artifacts" and "old" anywhere in the repo
+artifacts/
+old/
+
+# Uncomment to keep a .gitkeep file inside those dirs
+# !artifacts/.gitkeep
+# !old/.gitkeep
