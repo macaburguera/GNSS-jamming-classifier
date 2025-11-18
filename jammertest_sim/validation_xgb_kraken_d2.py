@@ -1,20 +1,30 @@
-# validation.py
 """
-Validate the SIM-trained XGB model on real Jammertest SBF IQ data.
+kraken_ramp_xgb_predict.py
 
-CHANGES (2025-03-31):
-- Canonicalization: enforce a single, consistent label namespace end-to-end.
-- Metrics: confusion matrix pinned to fixed class order; added GT/Pred counts.
-- NoJam veto (optional): conservative override to recover likely NoJam cases
-  when model confidence is low. Thresholds are tunable and logged.
+Open a Kraken raw IQ file from the Bleik Ramnan PRN ramp test (Test 7.1.4),
+take fixed-size IQ "snaps" every SNAP_PERIOD_SEC seconds, compute the same
+78-dimensional feature vector used for SIM training, run an XGB model, and
+save spectrograms annotated with:
 
-Run:
-  python sbf_iq_perblock_loglabel_predict_30s_new.py
+- Testplan metadata (Jammertest 2023, Test 7.1.4)
+- Approx local & UTC time-of-day of the snap
+- Jamming ramp phase (ramp_up / ramp_down / outside_nominal_ramp)
+- Logbook-derived jammer code + mapped GT class (when available)
+- Model predicted class + probability
+- fs, LO, STFT parameters, etc.
+
+Outputs:
+- PNG spectrograms for each snap
+- samples_log.csv with per-snap labels & probabilities
+- metrics.txt, confusion_matrix.png, summary.json (if GT is available)
 """
 
 from pathlib import Path
-import re, json, csv
+from datetime import datetime, timedelta, timezone
 from typing import List, Tuple, Optional, Dict
+import re, json, csv
+from collections import Counter
+
 import numpy as np
 
 import matplotlib
@@ -27,69 +37,97 @@ from scipy import ndimage
 from joblib import load as joblib_load
 from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
 
-from datetime import datetime, timedelta, timezone
-from collections import Counter
+# =====================================================================
+# ------------------------ USER CONFIG --------------------------------
+# =====================================================================
 
-# You must have a local parser for SBF BBSamples similar to your earlier script.
-# It should yield tuples: (block_name, infos_dict), where infos contains:
-#   - "Samples": raw interleaved int8 I/Q buffer (len = 2*N)
-#   - "N": number of complex samples
-#   - "SampleFreq": sampling frequency in Hz (float)
-#   - "WNc": GPS week number (int)
-#   - "TOW": GPS time-of-week seconds or milliseconds (float)
-from sbf_parser import SbfParser
+# Kraken raw IQ file (float32, interleaved I/Q, ONE channel)
+RAW_PATH = r"C:\Users\macab\OneDrive - Danmarks Tekniske Universitet\Geopositioning and Navigation - Jammertest 2023\23.09.19 - Jammertest 2023 - Day 2\Tuesday - SDR Measurements\Kraken\RX01-MPC1\CH3_RX01_Tues_Bleik_Meas_RampTest_2"
 
-# ============================ USER VARIABLES ============================
-SBF_PATH   = r"D:\datasets\Jammertest2023_Day1\Altus06 - 150m\alt06001.sbf"
-OUT_DIR    = r"D:\datasets\Jammertest2023_Day1\plots\alt06001_predicted_30s_SIMXGB_modNB_jsrcnr30db"
-LOGBOOK_PATH = r"D:\datasets\Jammertest2023_Day1\Testlog 23.09.18.txt"
+# Output directory (spectrogram PNGs + CSV + metrics)
+OUT_DIR  = r"D:\datasets\Jammertest2026_Day2\alt02-sbf-morning\CH3_RX01_Tues_Bleik_Meas_RampTest_2_predicted"
 
-# ==> Point to YOUR new XGB model trained on 78 features & new classes:
-MODEL_PATH = r"..\artifacts\jammertest_sim\xgb_run_20251117_182853\xgb_20251117_182911\xgb_trainval.joblib"
+# Sample rate of THIS Kraken recording (Hz)
+FS       = 2_050_000.0      # [Hz] (~2.05 MHz); adjust if you later confirm 2.048 MHz
 
-# Local test date/time (for logbook parsing)
-LOCAL_DATE       = "2023-09-18"   # date of the test in LOCAL time
-LOCAL_UTC_OFFSET = 2.0            # LOCAL - UTC (e.g., CEST=+2)
+# Reference Fs used in SIM training (for feature rescaling)
+FS_REF   = 60_000_000.0     # [Hz] (your MATLAB generator used 60 MHz)
 
-# Sampling policy: keep first block at/after each boundary (UTC)
-SAVE_EVERY_SEC = 30.0             # 30-second cadence
+# Snap configuration
+NSNAP    = 2048             # complex samples per snap (~1 ms at 2.05 MHz)
+SNAP_PERIOD_SEC = 10.0      # one snap every 10 seconds (start-to-start)
+MAX_SNAPS = None            # e.g. 100 to limit; None = until EOF
 
-# Optional decimation for features & plots (keep 1 for exact original fs)
-DECIM = 1
-
-# Spectrogram appearance (robust settings for short IQ bursts)
-NPERSEG = 64
+# STFT params (must match those used in training)
+NPERSEG  = 64
 NOVERLAP = 56
 REMOVE_DC = True
-VMIN_DB = -80
-VMAX_DB = -20
-DPI_FIG = 140
+VMIN_DB   = -80
+VMAX_DB   = -20
+DPI_FIG   = 140
+
+# ---------- Testplan metadata (Jammertest 2023) ----------
+TEST_ID   = "7.1.4"
+TEST_NAME = "Stationary high-power PRN ramp – Ramnan"
+TEST_DESC = (
+    "Porcus Major PRN jammer, 0.1 µW→20 W EIRP, 2 dB steps, 10 s/level; "
+    "bands: L1 + G1 + L2 + L5"
+)
+TEST_LOCATION = "Ramnan (mountainside NW of Bleik, Test Area 1)"
+
+# Nominal test duration from testplan: 13.67 minutes
+TEST_DURATION_SEC = 13.67 * 60.0  # ≈ 820.2 s
+
+# Assumed LOCAL start time of this recording (adjust seconds if needed)
+TEST_START_LOCAL = datetime(2023, 9, 19, 9, 30, 0)  # naive local time
+
+# LO / centre frequency of Kraken front-end for this file (fill from notes)
+# Example for GPS L1: LO_HZ = 1575.42e6
+LO_HZ: Optional[float] = None
+
+# ---------- Logbook (plaintext) for 2023-09-19 ----------
+LOGBOOK_PATH = r"C:\Users\macab\OneDrive - Danmarks Tekniske Universitet\Geopositioning and Navigation - Jammertest 2023\23.09.19 - Jammertest 2023 - Day 2\Testlog 23.09.19.txt"
+LOCAL_DATE       = "2023-09-19"   # date of the test in LOCAL time
+LOCAL_UTC_OFFSET = 2.0            # LOCAL - UTC (CEST = +2)
+
+# ---------- XGB model ----------
+MODEL_PATH = r"..\artifacts\jammertest_sim\xgb_run_20251117_182853\xgb_20251117_182911\xgb_trainval.joblib"
 
 # Save options
-CHUNK_BYTES = 1_000_000
-SAVE_IMAGES = True
-SAVE_PER_SAMPLE_CSV = True
-SUMMARY_JSON = True
-DEBUG_PRINT_SAMPLE_LABELS = False  # set True to verbose-print per-sample labels
+SAVE_IMAGES          = True
+SAVE_PER_SAMPLE_CSV  = True
+SUMMARY_JSON         = True
+DEBUG_PRINT_SNAP_LOG = False  # set True to verbose-print per-snap labels
 
-# New model class names (order must match your training labels)
+# Model class names (order must match training)
 MODEL_CLASS_NAMES = ["NoJam", "Chirp", "NB", "CW", "WB", "FH"]
+
+# NoJam veto configuration  (DISABLED NOW)
+USE_NOJAM_VETO  = False        # <<< veto off
+P_TOP_MIN       = 0.5
+P_NOJAM_MIN     = 0.8
+ENERGY_RMS_MAX  = 0.12
+P_NOJAM_LOWPOW  = 0.40
+
+# =====================================================================
+# --------------------- SHARED CONSTANTS ------------------------------
+# =====================================================================
+
+EPS = 1e-12
 
 # Canonicalization dictionary (lowercase -> canonical)
 CANON = {c.lower(): c for c in MODEL_CLASS_NAMES}
 
+
 def canon(name: Optional[str]) -> Optional[str]:
-    """Return canonical label if known; pass through unknowns as-is; None stays None."""
+    """Return canonical class name if known; pass through unknowns as-is; None stays None."""
     if name is None:
         return None
     s = str(name).strip()
     return CANON.get(s.lower(), s)
 
+
 # ----------------- Mapping: Jammertest logcode -> Model class -----------------
-# NOTE: Mapping semantics kept per your note:
-# - All listed jammer codes → "Chirp" EXCEPT "h1.1" → "NB"
-# - "no jam" / "off" / "no jamming" → "NoJam"
-# Keys are stored lowercase; parser text is normalized to lowercase before lookup.
 LOG_TO_MODEL: Dict[str, Optional[str]] = {
     "no jam": "NoJam",
     "off": "NoJam",
@@ -98,7 +136,7 @@ LOG_TO_MODEL: Dict[str, Optional[str]] = {
     # Narrowband high-power case:
     "h1.1": "NB",
 
-    # Chirp-like (all of these map to Chirp)
+    # Chirp-like (all of these map to "Chirp")
     "h1.2": "Chirp",
     "u1.1": "Chirp",
     "u1.2": "Chirp",
@@ -110,42 +148,38 @@ LOG_TO_MODEL: Dict[str, Optional[str]] = {
     "unknown/confusion": None,
     "unknown": None,
 }
-# ============================================================================
 
-# ====================== TIME / LOGBOOK HELPERS ======================
-EPS = 1e-20
-GPS_EPOCH = datetime(1980, 1, 6, tzinfo=timezone.utc)
-GPS_MINUS_UTC = 18.0  # seconds
 
-Interval = Tuple[datetime, datetime, str]  # (UTC start, UTC end, label)
-
-def gps_week_tow_to_utc(wn: int, tow_s: float) -> datetime:
-    dt_gps = GPS_EPOCH + timedelta(weeks=int(wn), seconds=float(tow_s))
-    return dt_gps - timedelta(seconds=GPS_MINUS_UTC)
-
-def seconds_to_hms(tsec: float) -> str:
-    tsec = float(tsec) % 86400.0
-    h = int(tsec // 3600); m = int((tsec % 3600) // 60)
-    s = tsec - 3600*h - 60*m
-    return f"{h:02d}:{m:02d}:{s:06.3f}"
-
-def extract_time_labels(infos):
-    wnc = int(infos.get("WNc", -1))
-    tow_raw = float(infos.get("TOW", 0))
-    # Some SBFs encode TOW in ms; detect & convert
-    tow_s = tow_raw / 1000.0 if tow_raw > 604800.0 else tow_raw
-    tow_hms = seconds_to_hms(tow_s)
-    utc_dt = gps_week_tow_to_utc(wnc, tow_s)
-    utc_hms = utc_dt.strftime("%H:%M:%S.%f")[:-3]
-    utc_iso = utc_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " UTC"
-    return wnc, tow_s, tow_hms, utc_hms, utc_iso, utc_dt
-
-def parse_plaintext_logbook(path: str, local_date: str, local_utc_offset_hours: float) -> List[Interval]:
+def map_log_to_model(log_label: Optional[str]) -> Optional[str]:
     """
-    Lines example:
+    Map raw log label (e.g., 'NO JAM', 'u1.1', 'h1.1') to canonical model label.
+    Unknown/None -> None (excluded from GT).
+    """
+    if log_label is None:
+        return None
+    key = log_label.strip().lower()
+    mapped = LOG_TO_MODEL.get(key, None)
+    return canon(mapped) if mapped is not None else None
+
+
+# =====================================================================
+# ---------------------- LOGBOOK HELPERS ------------------------------
+# =====================================================================
+
+Interval = Tuple[datetime, datetime, str]  # (UTC start, UTC end, raw_label)
+
+
+def parse_plaintext_logbook(path: str, local_date: str,
+                            local_utc_offset_hours: float) -> List[Interval]:
+    """
+    Parse the Jammertest plaintext logbook for a given local date.
+
+    Example line formats:
       '16:00 - Test was started - no jamming'
       '16:05 - Jammer u1.1 was turned on'
-    Returns UTC intervals with labels: 'NO JAM', 'u1.1', 's1.2', etc. (raw text codes)
+
+    Returns intervals in UTC with raw string labels:
+        'NO JAM', 'u1.1', 's2.1', 'UNKNOWN/CONFUSION', etc.
     """
     time_re = re.compile(r'^\s*(\d{1,2}):(\d{2})\s*[-–—]\s*(.+)$')
 
@@ -154,18 +188,16 @@ def parse_plaintext_logbook(path: str, local_date: str, local_utc_offset_hours: 
     offs = timedelta(hours=float(local_utc_offset_hours))
 
     def label_from_text(txt: str) -> str:
-        # Normalize spaces and case for robust checks
         t_norm = " ".join(txt.strip().split())
         tl = t_norm.lower()
 
-        # Clear "off" / "no jamming" cases first
+        # "no jamming" / "turned off" → NO JAM
         if ("no jamming" in tl) or (re.search(r"\bturned\s+off\b", tl) and "confusion" not in tl):
             return "NO JAM"
         if "confusion" in tl:
             return "UNKNOWN/CONFUSION"
 
-        # Pattern: Jammer <CODE> [optional (...) blurb] (was)? turned on
-        # - <CODE> allows letters/numbers/.- (e.g., s2.1, h1.1, u1-xyz)
+        # Jammer <CODE> ... was turned on
         pat = re.compile(
             r"jammer\s+([A-Za-z0-9.\-]+)"
             r"(?:\s*\([^)]*\))?"
@@ -176,7 +208,7 @@ def parse_plaintext_logbook(path: str, local_date: str, local_utc_offset_hours: 
         if m:
             return m.group(1).lower()
 
-        # Fallback: Jammer <CODE> ... on   (avoid misfiring on 'turned off')
+        # Fallback: Jammer <CODE> ... on   (avoid "turned off")
         if "turned off" not in tl:
             m2 = re.search(r"jammer\s+([A-Za-z0-9.\-]+)\b.*\bon\b", t_norm, flags=re.IGNORECASE)
             if m2:
@@ -187,7 +219,7 @@ def parse_plaintext_logbook(path: str, local_date: str, local_utc_offset_hours: 
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             m = time_re.match(line)
-            if not m: 
+            if not m:
                 continue
             hh, mm, rest = m.groups()
             local_dt = base.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
@@ -202,39 +234,73 @@ def parse_plaintext_logbook(path: str, local_date: str, local_utc_offset_hours: 
         intervals.append((start_local - offs, end_local - offs, lbl))
     return intervals
 
+
 def label_for_time(intervals: List[Interval], t_utc: datetime) -> Optional[str]:
-    for a,b,label in intervals:
+    """Return raw logbook label for a UTC datetime, or None if out of range."""
+    for a, b, label in intervals:
         if a <= t_utc < b:
             return label
     return None
 
-def map_log_to_model(log_label: Optional[str]) -> Optional[str]:
-    """
-    Map raw log label (e.g., 'NO JAM', 'u1.1', 'h1.1') to canonical model label.
-    Preserves your mapping semantics. Unknown/None -> None (excluded from GT).
-    """
-    if log_label is None:
-        return None
-    key = log_label.strip().lower()
-    mapped = LOG_TO_MODEL.get(key, None)
-    return canon(mapped) if mapped is not None else None
 
-# ====================== SBF IQ DECODING ======================
-def decode_bbsamples_iq(infos):
-    if "Samples" not in infos or "N" not in infos:
-        return None, None
-    buf = infos["Samples"]; N = int(infos["N"])
-    arr = np.frombuffer(buf, dtype=np.int8)
-    if arr.size != 2 * N:
-        return None, None
-    I = arr[0::2].astype(np.float32) / 128.0
-    Q = arr[1::2].astype(np.float32) / 128.0
-    x = I + 1j * Q
-    fs = float(infos.get("SampleFreq", 1.0))
-    return x, fs
+# =====================================================================
+# ---------------------- KRAKEN SNAP ITERATOR -------------------------
+# =====================================================================
 
-# ====================== 78-FEATURE EXTRACTOR (1:1 with data_preparation.py) ======================
-# Tunables (copied from your latest prep script)
+def iter_snaps_every_Xsec(path: str,
+                          fs: float,
+                          nsnap: int,
+                          snap_period_sec: float):
+    """
+    Yields (snap_idx, x) where x is a 1D complex64 array of length <= nsnap,
+    and each snap starts snap_period_sec seconds after the previous one.
+    """
+    samples_per_period = int(round(snap_period_sec * fs))
+    if samples_per_period < nsnap:
+        raise ValueError(
+            f"SNAP_PERIOD_SEC * FS = {samples_per_period} samples "
+            f"is smaller than NSNAP = {nsnap}. Overlap not supported."
+        )
+
+    skip_samples = samples_per_period - nsnap
+
+    floats_per_snap = nsnap * 2             # I + Q
+    bytes_per_snap  = floats_per_snap * 4   # float32
+
+    floats_to_skip = skip_samples * 2
+    bytes_to_skip  = floats_to_skip * 4
+
+    with open(path, "rb") as f:
+        snap_idx = 0
+        while True:
+            raw = f.read(bytes_per_snap)
+            if not raw:
+                break
+            if len(raw) < 8:
+                break
+
+            arr = np.frombuffer(raw, dtype="<f4")  # little-endian float32
+
+            if arr.size % 2:
+                arr = arr[:-1]
+            if arr.size < 4:
+                break
+
+            I = arr[0::2]
+            Q = arr[1::2]
+            x = I + 1j * Q
+
+            yield snap_idx, x.astype(np.complex64, copy=False)
+            snap_idx += 1
+
+            if bytes_to_skip > 0:
+                f.seek(bytes_to_skip, 1)
+
+
+# =====================================================================
+# ---------------------- FEATURE EXTRACTOR ----------------------------
+# =====================================================================
+
 WELCH_NPERSEG = 256
 WELCH_OVERLAP = 128
 MAX_LAG_S     = 200e-6
@@ -249,6 +315,7 @@ STFT_NPERSEG  = 128
 STFT_NOVERLAP = 96
 STFT_NFFT     = 128
 
+
 def safe_skew(x: np.ndarray) -> float:
     x = np.asarray(x, float)
     n = x.size
@@ -260,8 +327,8 @@ def safe_skew(x: np.ndarray) -> float:
         return 0.0
     return float(np.mean(((x - m) / s) ** 3))
 
+
 def safe_kurtosis(x: np.ndarray) -> float:
-    # Population kurtosis (Fisher=False). Returns 3.0 for constant/short arrays.
     x = np.asarray(x, float)
     n = x.size
     if n < 4:
@@ -272,6 +339,7 @@ def safe_kurtosis(x: np.ndarray) -> float:
         return 3.0
     m4 = np.mean((x - m) ** 4)
     return float(m4 / (v ** 2))
+
 
 def fast_autocorr_env(z: np.ndarray, fs: float, max_lag_s: float):
     env = np.abs(z).astype(np.float64)
@@ -289,23 +357,31 @@ def fast_autocorr_env(z: np.ndarray, fs: float, max_lag_s: float):
     k = 1 + int(np.argmax(ac[1:max_lag]))
     return float(ac[k]), float(k / fs)
 
+
 def zero_crossing_rate(x):
     return float(np.mean(np.abs(np.diff(np.signbit(x))).astype(float))) if x.size > 1 else 0.0
 
+
 def spectral_moments(f, Pxx):
-    P = np.maximum(Pxx, EPS); w = P / P.sum()
+    P = np.maximum(Pxx, EPS)
+    w = P / P.sum()
     mu = float(np.sum(f * w))
     std = float(np.sqrt(np.sum(((f - mu) ** 2) * w)))
     return mu, std
 
+
 def spectral_rolloff(f, Pxx, roll=0.95):
-    P = np.maximum(Pxx, EPS); c = np.cumsum(P)
-    idx = int(np.searchsorted(c, roll * c[-1])); idx = min(idx, len(f)-1)
+    P = np.maximum(Pxx, EPS)
+    c = np.cumsum(P)
+    idx = int(np.searchsorted(c, roll * c[-1]))
+    idx = min(idx, len(f)-1)
     return float(f[idx])
+
 
 def spectral_flatness(Pxx):
     P = np.maximum(Pxx, EPS)
     return float(np.exp(np.mean(np.log(P))) / np.mean(P))
+
 
 def bandpowers(f, Pxx, bands):
     P = np.maximum(Pxx, EPS)
@@ -316,6 +392,7 @@ def bandpowers(f, Pxx, bands):
     out = np.array(out, float)
     s = out.sum()
     return (out / (s + EPS)).astype(float)
+
 
 def inst_freq_stats(z: np.ndarray, fs: float):
     if len(z) < 3:
@@ -336,6 +413,7 @@ def inst_freq_stats(z: np.ndarray, fs: float):
         dzcr_per_s = float(frac * fs)
     return float(np.mean(inst_f)), float(np.std(inst_f)), slope, kurt, dzcr_per_s
 
+
 def cepstral_peak_env(z: np.ndarray, fs: float, qmin=2e-4, qmax=5e-3):
     env = np.abs(z).astype(np.float64)
     env = env - env.mean()
@@ -349,6 +427,7 @@ def cepstral_peak_env(z: np.ndarray, fs: float, qmin=2e-4, qmax=5e-3):
     mask = (q >= qmin) & (q <= qmax)
     return float(np.max(ceps[mask])) if np.any(mask) else 0.0
 
+
 def dme_pulse_proxy(z: np.ndarray, fs: float):
     env = np.abs(z).astype(np.float64)
     win = max(3, int(round(0.5e-6 * fs)))
@@ -359,6 +438,7 @@ def dme_pulse_proxy(z: np.ndarray, fs: float):
     duty = float(above.mean())
     return float(rising.sum()), duty
 
+
 def nb_peak_salience(f: np.ndarray, Pxx: np.ndarray, top_k=5):
     if Pxx.size < top_k:
         return 0.0
@@ -366,6 +446,7 @@ def nb_peak_salience(f: np.ndarray, Pxx: np.ndarray, top_k=5):
     top = float(Pxx[idx].sum())
     rest = float(max(EPS, 1.0 - top))  # Pxx normalized
     return float(top / (rest + EPS))
+
 
 def nb_peaks_and_spacing(f: np.ndarray, Pxx: np.ndarray):
     maxp = float(Pxx.max())
@@ -379,7 +460,9 @@ def nb_peaks_and_spacing(f: np.ndarray, Pxx: np.ndarray):
     spac = np.diff(np.sort(freqs))
     return float(idx.size), float(np.median(spac)), float(np.std(spac))
 
-def am_envelope_features(z: np.ndarray, fs: float, fmin=ENV_FFT_BAND[0], fmax=ENV_FFT_BAND[1]):
+
+def am_envelope_features(z: np.ndarray, fs: float,
+                         fmin=ENV_FFT_BAND[0], fmax=ENV_FFT_BAND[1]):
     env = np.abs(z).astype(np.float64)
     mu = env.mean()
     mod_index = float(np.var(env) / (mu*mu + EPS))
@@ -397,11 +480,13 @@ def am_envelope_features(z: np.ndarray, fs: float, fmin=ENV_FFT_BAND[0], fmax=EN
     peak_pow_norm = float(Pb[k] / (Pb.sum() + EPS))
     return mod_index, peak_f, peak_pow_norm
 
+
 def choose_chirp_slices(N: int, fs: float) -> int:
     total_t = N / float(fs)
     target = CHIRP_TARGET_SLICE_S
     s = int(round(max(CHIRP_MIN_SLICES, min(CHIRP_MAX_SLICES, total_t / target))))
     return max(CHIRP_MIN_SLICES, min(CHIRP_MAX_SLICES, s))
+
 
 def chirp_slope_proxy(z: np.ndarray, fs: float, slices: int):
     N = len(z)
@@ -419,7 +504,8 @@ def chirp_slope_proxy(z: np.ndarray, fs: float, slices: int):
         mu, _ = spectral_moments(f1, Pxx)
         cents.append(mu)
         times.append((i + 0.5) * (N/fs) / slices)
-    cents = np.array(cents, float); times = np.array(times, float)
+    cents = np.array(cents, float)
+    times = np.array(times, float)
     if cents.size < 2:
         return 0.0, 0.0
     p = np.polyfit(times, cents, 1)
@@ -430,18 +516,22 @@ def chirp_slope_proxy(z: np.ndarray, fs: float, slices: int):
     r2 = float(1.0 - ss_res/ss_tot)
     return slope, r2
 
+
 def cyclo_lag_corr(z: np.ndarray, lag: int) -> float:
     if lag <= 0 or lag >= len(z):
         return 0.0
-    a = z[lag:]; b = z[:-lag]
+    a = z[lag:]
+    b = z[:-lag]
     num = np.vdot(b, a)
     den = np.sqrt(np.vdot(a, a).real * np.vdot(b, b).real) + EPS
     return float(np.abs(num) / den)
+
 
 def cyclo_proxies(z: np.ndarray, fs: float):
     L1 = int(round(fs / CYC_ALPHA1_HZ)) if CYC_ALPHA1_HZ > 0 else 0
     L2 = int(round(fs / CYC_ALPHA2_HZ)) if CYC_ALPHA2_HZ > 0 else 0
     return cyclo_lag_corr(z, L1), cyclo_lag_corr(z, L2)
+
 
 def cumulants_c40_c42(z: np.ndarray):
     if z.size < 8:
@@ -456,6 +546,7 @@ def cumulants_c40_c42(z: np.ndarray):
     c42 = m42 - (np.abs(m20)**2) - 2.0
     return float(np.abs(c40)), float(np.abs(c42))
 
+
 def spectral_kurtosis_stats(z: np.ndarray, fs: float):
     try:
         f, t, Sxx = spectrogram(z, fs=fs, window="hann",
@@ -464,7 +555,7 @@ def spectral_kurtosis_stats(z: np.ndarray, fs: float):
                                 scaling="density", mode="psd")
         if Sxx.ndim != 2 or Sxx.shape[1] < 4:
             return 0.0, 0.0
-        # population kurtosis per frequency bin
+
         def kurt_pop_safe(v):
             v = np.asarray(v, float)
             if v.size < 4:
@@ -475,11 +566,14 @@ def spectral_kurtosis_stats(z: np.ndarray, fs: float):
                 return 3.0
             m4 = np.mean((v - m) ** 4)
             return float(m4 / (s2 ** 2))
-        sk = np.array([kurt_pop_safe(Sxx[i, :]) for i in range(Sxx.shape[0])], dtype=float)
+
+        sk = np.array([kurt_pop_safe(Sxx[i, :]) for i in range(Sxx.shape[0])],
+                      dtype=float)
         sk = np.clip(sk, 0.0, 1e6)
         return float(np.mean(sk)), float(np.max(sk))
     except Exception:
         return 0.0, 0.0
+
 
 def tkeo_env_mean(z: np.ndarray):
     e = np.abs(z).astype(np.float64)
@@ -489,6 +583,7 @@ def tkeo_env_mean(z: np.ndarray):
     psi = np.maximum(psi, 0.0)
     denom = (np.mean(e)**2 + EPS)
     return float(np.mean(psi) / denom)
+
 
 def gini_coefficient(x):
     x = np.asarray(x, float).ravel()
@@ -503,6 +598,7 @@ def gini_coefficient(x):
     cum = np.sum((np.arange(1, n+1, dtype=float)) * x)
     G = (2.0 * cum) / (n * s) - (n + 1.0) / n
     return float(np.clip(G, 0.0, 1.0))
+
 
 def stft_timefreq_dynamics(z: np.ndarray, fs: float):
     f, t, Sxx = spectrogram(z, fs=fs, window="hann",
@@ -533,6 +629,7 @@ def stft_timefreq_dynamics(z: np.ndarray, fs: float):
     strong_bins_mean = float((Sxxn > 0.5*np.max(Sxxn, axis=0, keepdims=True)).mean())
     return float(np.std(cent)), float(np.median(np.abs(dcent_dt))), zcr_per_s, hop_rate, strong_bins_mean
 
+
 def symmetry_dc_peakiness(f, Pxx, fs):
     P = np.maximum(Pxx, EPS)
     pos = P[f > 0].sum()
@@ -546,6 +643,7 @@ def symmetry_dc_peakiness(f, Pxx, fs):
     peakiness_ratio = float(P.max() / (np.median(P) + EPS))
     return symmetry_idx, dc_notch_ratio, peakiness_ratio
 
+
 def dme_ipi_stats(z: np.ndarray, fs: float):
     env = np.abs(z).astype(np.float64)
     if env.size < 8:
@@ -558,6 +656,7 @@ def dme_ipi_stats(z: np.ndarray, fs: float):
         return 0.0, 0.0
     ipi = np.diff(pk) / fs
     return float(np.median(ipi)), float(np.std(ipi))
+
 
 FEATURE_NAMES = (
     ["meanI","meanQ","stdI","stdQ","corrIQ","mag_mean","mag_std",
@@ -584,7 +683,27 @@ FEATURE_NAMES = (
     + ["chirp_curvature_Hzps2"]
     + ["dme_ipi_med_s","dme_ipi_std_s"]
 )
-PRE_RMS_IDX = FEATURE_NAMES.index("pre_rms")  # used by veto
+PRE_RMS_IDX = FEATURE_NAMES.index("pre_rms")
+
+# Indices of frequency-related features to rescale to FS_REF
+FREQ_FEATURE_NAMES = [
+    "spec_centroid_Hz",
+    "spec_spread_Hz",
+    "spec_rolloff95_Hz",
+    "spec_peak_freq_Hz",
+    "instf_mean_Hz",
+    "instf_std_Hz",
+    "instf_slope_Hzps",
+    "nb_spacing_med_Hz",
+    "nb_spacing_std_Hz",
+    "env_dom_freq_Hz",
+    "chirp_slope_Hzps",
+    "stft_centroid_std_Hz",
+    "stft_centroid_absderiv_med_Hzps",
+    "chirp_curvature_Hzps2",
+]
+FREQ_FEATURE_IDX = [FEATURE_NAMES.index(n) for n in FREQ_FEATURE_NAMES if n in FEATURE_NAMES]
+
 
 def extract_features(iq: np.ndarray, fs: float) -> np.ndarray:
     iq = iq.astype(np.complex64, copy=False)
@@ -632,7 +751,9 @@ def extract_features(iq: np.ndarray, fs: float) -> np.ndarray:
     mu, std = spectral_moments(f, Pxx)
     flat = spectral_flatness(Pxx)
     roll = spectral_rolloff(f, Pxx, 0.95)
-    kmax = int(np.argmax(Pxx)); fmax = float(f[kmax]); pmax = float(Pxx[kmax])
+    kmax = int(np.argmax(Pxx))
+    fmax = float(f[kmax])
+    pmax = float(Pxx[kmax])
     feats += [mu, std, flat, roll, fmax, pmax]
 
     edges = np.linspace(-fs/2, fs/2, 9)   # 8 equal bands
@@ -692,7 +813,8 @@ def extract_features(iq: np.ndarray, fs: float) -> np.ndarray:
                                      return_onesided=False, scaling="density", mode="psd")
     if Sxx_st.ndim == 2 and Sxx_st.shape[1] >= 3:
         order2 = np.argsort(f_st)
-        f_st = f_st[order2]; Sxx_st = np.maximum(Sxx_st[order2, :], EPS)
+        f_st = f_st[order2]
+        Sxx_st = np.maximum(Sxx_st[order2, :], EPS)
         Sxxn = Sxx_st / (np.sum(Sxx_st, axis=0, keepdims=True) + EPS)
         cent = np.sum(f_st[:, None] * Sxxn, axis=0)
         tt = np.arange(cent.size, dtype=float) * ((STFT_NPERSEG - STFT_NOVERLAP) / fs)
@@ -707,78 +829,20 @@ def extract_features(iq: np.ndarray, fs: float) -> np.ndarray:
 
     v = np.asarray(feats, dtype=np.float32)
     v[~np.isfinite(v)] = 0.0
+
+    # ---- Rescale frequency-related features from fs to FS_REF ----
+    if fs > 0 and FS_REF > 0:
+        scale = float(FS_REF) / float(fs)
+        for idx in FREQ_FEATURE_IDX:
+            v[idx] *= scale
+
     return v
 
-# ====================== PLOTTING ======================
-def plot_and_save(block_idx, x, fs, wnc, tow_s, tow_hms, utc_hms, utc_iso, utc_dt,
-                  log_label, gt_label, pred_label, pred_proba, out_dir,
-                  nperseg=NPERSEG, noverlap=NOVERLAP, dpi=DPI_FIG,
-                  remove_dc=REMOVE_DC, vmin=VMIN_DB, vmax=VMAX_DB):
-    if x.size < 8:
-        return None
-    xx = x - np.mean(x) if remove_dc else x
 
-    nperseg_eff = min(int(nperseg), len(xx))
-    noverlap_eff = min(int(noverlap), max(0, nperseg_eff - 1))
+# =====================================================================
+# ---------------------- MODEL NORMALIZATION --------------------------
+# =====================================================================
 
-    f, t, Z = stft(xx, fs=fs, window="hann", nperseg=nperseg_eff, noverlap=noverlap_eff,
-                   return_onesided=False, boundary=None, padded=False)
-    if t.size < 2:
-        nperseg_eff = max(16, min(len(xx)//4, nperseg_eff))
-        noverlap_eff = int(0.9 * nperseg_eff)
-        f, t, Z = stft(xx, fs=fs, window="hann", nperseg=nperseg_eff, noverlap=noverlap_eff,
-                       return_onesided=False, boundary=None, padded=False)
-
-    Z = np.fft.fftshift(Z, axes=0); f = np.fft.fftshift(f)
-    S_dB = 20.0 * np.log10(np.abs(Z) + EPS)
-
-    tt = np.arange(len(xx), dtype=np.float32) / fs
-    I = np.real(xx); Q = np.imag(xx)
-
-    fig = plt.figure(figsize=(10, 7))
-    ax1 = fig.add_subplot(2,1,1)
-    if t.size >= 2:
-        pcm = ax1.pcolormesh(t, f, S_dB, shading="auto", vmin=vmin, vmax=vmax)
-        plt.colorbar(pcm, ax=ax1, label="dB")
-    else:
-        im = ax1.imshow(S_dB, aspect="auto", origin="lower",
-                        extent=[0.0, max(1.0/fs, nperseg_eff/fs), f[0], f[-1]],
-                        vmin=vmin, vmax=vmax)
-        plt.colorbar(im, ax=ax1, label="dB")
-
-    jam_txt = f" | Jammer: {log_label}" if log_label else " | Jammer: (none)"
-    gt_txt  = f" | GT: {gt_label}" if gt_label is not None else " | GT: Unknown"
-    if pred_label is None:
-        pred_txt = " | Pred: (model failed)"
-    else:
-        if isinstance(pred_proba, dict) and pred_label in pred_proba:
-            pred_txt = f" | Pred: {pred_label} ({pred_proba[pred_label]:.2f})"
-        else:
-            pred_txt = f" | Pred: {pred_label}"
-
-    title = (f"Spectrogram (BBSamples #{block_idx})  |  GPS week {wnc}  |  "
-             f"TOW {tow_s:.3f}s ({tow_hms})  |  UTC {utc_hms}{jam_txt}{gt_txt}{pred_txt}\n"
-             f"nperseg={nperseg_eff}, noverlap={noverlap_eff}")
-    ax1.set_title(title)
-    ax1.set_ylabel("Frequency [Hz]")
-
-    ax2 = fig.add_subplot(2,1,2)
-    ax2.plot(tt, I, linewidth=0.7, label="I")
-    ax2.plot(tt, Q, linewidth=0.7, alpha=0.85, label="Q")
-    ax2.set_xlabel("Time [s]")
-    ax2.set_ylabel("Amplitude (norm.)")
-    ax2.legend(loc="upper right")
-    ax2.text(0.01, 0.02, utc_iso, transform=ax2.transAxes, fontsize=8, ha="left", va="bottom")
-
-    fig.tight_layout()
-    fname_log  = (log_label or "nolabel").replace(" ", "_").replace("/", "-")
-    fname_pred = (pred_label or "nopred").replace(" ", "_")
-    out_path = Path(out_dir) / f"spec_{utc_dt.strftime('%H%M%S')}_{fname_log}_GT-{gt_label or 'Unknown'}_PRED-{fname_pred}_blk{block_idx:06d}.png"
-    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
-    plt.close(fig)
-    return out_path
-
-# ====================== MODEL NORMALIZATION ======================
 def normalize_model_labeler(model):
     """
     Returns (predict_fn, classes_order, to_name):
@@ -796,18 +860,15 @@ def normalize_model_labeler(model):
             classes_attr = None
 
     if classes_attr is not None and len(classes_attr) > 0:
-        # If stored labels are ints 0..5, map via MODEL_CLASS_NAMES
         arr = np.array(classes_attr)
         if np.issubdtype(arr.dtype, np.integer):
             idx_to_name = {int(i): MODEL_CLASS_NAMES[int(i)] for i in range(len(MODEL_CLASS_NAMES))}
             to_name = lambda y: idx_to_name.get(int(y), str(y))
             classes_order = [idx_to_name.get(int(i), str(i)) for i in arr]
         else:
-            # Already strings
             to_name = lambda y: canon(y)
             classes_order = [canon(c) for c in classes_attr]
     else:
-        # Fallback: assume estimator returns ints
         to_name = lambda y: MODEL_CLASS_NAMES[int(y)] if isinstance(y, (int, np.integer)) and 0 <= int(y) < len(MODEL_CLASS_NAMES) else str(y)
         classes_order = MODEL_CLASS_NAMES[:]
 
@@ -837,183 +898,354 @@ def normalize_model_labeler(model):
 
     return predict_fn, classes_order, to_name
 
-# ====================== NOJAM VETO (OPTIONAL) ======================
-# These thresholds are conservative defaults; tune on your validation data.
-USE_NOJAM_VETO = True
-P_TOP_MIN       = 0.5   # if max class prob is below this, prediction is "uncertain"
-P_NOJAM_MIN     = 0.8   # if NoJam prob is at/above this and we're uncertain, call NoJam
-ENERGY_RMS_MAX  = 0.12   # if absolute power is very low and NoJam prob is non-trivial, call NoJam
-P_NOJAM_LOWPOW  = 0.40   # NoJam prob needed in the low-power case
+
+# =====================================================================
+# -------------------------- NOJAM VETO -------------------------------
+# =====================================================================
 
 def apply_nojam_veto(pred_label: Optional[str],
                      pred_proba: Optional[Dict[str, float]],
                      feats_vec: np.ndarray) -> (Optional[str], bool, Dict[str, float]):
     """
-    Optionally override the model prediction to 'NoJam' in two scenarios:
-      (A) Uncertain prediction: top prob < P_TOP_MIN and p(NoJam) >= P_NOJAM_MIN
-      (B) Very low power: pre_rms <= ENERGY_RMS_MAX and p(NoJam) >= P_NOJAM_LOWPOW
-    Returns: (possibly-updated label, veto_applied_flag, proba_dict or {})
+    Optionally override the model prediction to 'NoJam'.
+    (Currently disabled globally via USE_NOJAM_VETO=False.)
     """
     if not USE_NOJAM_VETO or pred_label is None or pred_proba is None:
-        return pred_label, False, pred_proba or {}
+        return pred_label, False, {}
 
     p_top = max(pred_proba.values()) if pred_proba else 0.0
     p_nj  = float(pred_proba.get("NoJam", 0.0))
     pre_rms_val = float(feats_vec[PRE_RMS_IDX]) if PRE_RMS_IDX is not None else 0.0
 
     veto = False
-    # Scenario A: uncertain overall, decent NoJam probability
     if (p_top < P_TOP_MIN) and (p_nj >= P_NOJAM_MIN):
-        pred_label = "NoJam"; veto = True
-    # Scenario B: very low energy, modest NoJam probability
+        pred_label = "NoJam"
+        veto = True
     elif (pre_rms_val <= ENERGY_RMS_MAX) and (p_nj >= P_NOJAM_LOWPOW):
-        pred_label = "NoJam"; veto = True
+        pred_label = "NoJam"
+        veto = True
 
-    return pred_label, veto, {"p_top": p_top, "p_nojam": p_nj, "pre_rms": pre_rms_val, **pred_proba}
+    diag = {
+        "p_top": p_top,
+        "p_nojam": p_nj,
+        "pre_rms": pre_rms_val,
+    }
+    return pred_label, veto, diag
 
-# ====================== MAIN ======================
+
+# =====================================================================
+# ---------------------- PLOTTING FOR KRAKEN --------------------------
+# =====================================================================
+
+def plot_and_save_snap(
+    snap_idx: int,
+    x: np.ndarray,
+    fs: float,
+    out_dir: Path,
+    t_mid_rel: float,
+    t_mid_abs_local: datetime,
+    lo_hz: Optional[float],
+    phase: str,
+    log_label_raw: Optional[str],
+    gt_label: Optional[str],
+    pred_label: Optional[str],
+    pred_proba: Optional[Dict[str, float]],
+) -> Optional[Path]:
+    N = x.size
+    if N < 8:
+        return None
+
+    if REMOVE_DC:
+        x = x - np.mean(x)
+
+    nperseg_eff  = min(NPERSEG, N)
+    noverlap_eff = min(NOVERLAP, max(0, nperseg_eff - 1))
+
+    f, t, Z = stft(
+        x,
+        fs=fs,
+        window="hann",
+        nperseg=nperseg_eff,
+        noverlap=noverlap_eff,
+        return_onesided=False,
+        boundary=None,
+        padded=False,
+    )
+
+    Z = np.fft.fftshift(Z, axes=0)
+    f = np.fft.fftshift(f)
+    S_dB = 20.0 * np.log10(np.abs(Z) + EPS)
+
+    tt = np.arange(N, dtype=np.float32) / fs
+    I = np.real(x)
+    Q = np.imag(x)
+
+    fig = plt.figure(figsize=(10, 7))
+
+    ax1 = fig.add_subplot(2, 1, 1)
+    if t.size >= 2:
+        pcm = ax1.pcolormesh(
+            t, f, S_dB, shading="auto",
+            vmin=VMIN_DB, vmax=VMAX_DB
+        )
+        fig.colorbar(pcm, ax=ax1, label="dB")
+    else:
+        im = ax1.imshow(
+            S_dB,
+            aspect="auto",
+            origin="lower",
+            extent=[
+                0.0,
+                max(1.0 / fs, nperseg_eff / fs),
+                f[0],
+                f[-1],
+            ],
+            vmin=VMIN_DB,
+            vmax=VMAX_DB,
+        )
+        fig.colorbar(im, ax=ax1, label="dB")
+
+    if lo_hz is not None:
+        ax1.set_ylabel(
+            "Baseband frequency [Hz]\n"
+            f"(around LO={lo_hz/1e6:.3f} MHz)"
+        )
+    else:
+        ax1.set_ylabel("Baseband frequency [Hz]")
+
+    ax1.set_title("Spectrogram (STFT of 1 snap)")
+
+    ax2 = fig.add_subplot(2, 1, 2)
+    ax2.plot(tt, I, linewidth=0.6, label="I")
+    ax2.plot(tt, Q, linewidth=0.6, alpha=0.85, label="Q")
+    ax2.set_xlabel("Time within snap [s]")
+    ax2.set_ylabel("Amplitude")
+    ax2.legend(loc="upper right")
+
+    meta_lines = []
+    meta_lines.append(f"Test {TEST_ID} – {TEST_NAME}")
+    meta_lines.append(TEST_DESC)
+    meta_lines.append(f"Location: {TEST_LOCATION} | Jammer: Porcus Major")
+
+    meta_lines.append(
+        f"Snap {snap_idx:04d} – mid local time {t_mid_abs_local.strftime('%H:%M:%S')} "
+        f"(Δt={t_mid_rel:6.1f} s from test start, phase={phase})"
+    )
+
+    jam_txt = f"{log_label_raw}" if log_label_raw is not None else "(none)"
+    gt_txt = gt_label if gt_label is not None else "Unknown"
+
+    if pred_label is None:
+        pred_txt = "(model failed)"
+    else:
+        p_pred = None
+        if isinstance(pred_proba, dict):
+            p_pred = pred_proba.get(pred_label, None)
+        if p_pred is not None:
+            pred_txt = f"{pred_label} (p={p_pred:.2f})"
+        else:
+            pred_txt = pred_label
+
+    meta_lines.append(
+        f"Logbook jammer: {jam_txt} | GT: {gt_txt} | Pred: {pred_txt}"
+    )
+
+    if lo_hz is not None:
+        meta_lines.append(
+            f"fs={fs/1e6:.3f} Msps, LO={lo_hz/1e6:.3f} MHz, "
+            f"N={N}, nperseg={nperseg_eff}, noverlap={noverlap_eff}"
+        )
+    else:
+        meta_lines.append(
+            f"fs={fs/1e6:.3f} Msps, N={N}, "
+            f"nperseg={nperseg_eff}, noverlap={noverlap_eff}"
+        )
+
+    fig.suptitle("\n".join(meta_lines), fontsize=9)
+    fig.tight_layout(rect=[0, 0, 1, 0.88])
+
+    log_tag  = (log_label_raw or "nolabel").replace(" ", "_").replace("/", "-")
+    gt_tag   = gt_label or "Unknown"
+    pred_tag = pred_label or "nopred"
+
+    out_path = out_dir / f"spec_snap{snap_idx:06d}_{log_tag}_GT-{gt_tag}_PRED-{pred_tag}.png"
+    fig.savefig(out_path, dpi=DPI_FIG, bbox_inches="tight")
+    plt.close(fig)
+
+    return out_path
+
+
+# =====================================================================
+# ------------------------------ MAIN --------------------------------
+# =====================================================================
+
 def main():
-    out_dir = Path(OUT_DIR); out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(OUT_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load model
-    print(f"Loading model: {MODEL_PATH}")
+    snap_dur_sec = NSNAP / FS
+
+    print("========== KRAKEN RAW IQ → XGB PREDICTIONS ==========")
+    print(f"Reading raw IQ from : {RAW_PATH}")
+    print(f"Saving outputs to   : {out_dir}")
+    print()
+    print(f"Testplan           : {TEST_ID} – {TEST_NAME}")
+    print(f"Description        : {TEST_DESC}")
+    print(f"Location           : {TEST_LOCATION}")
+    print(f"Assumed start time : {TEST_START_LOCAL} (local)")
+    print(f"Nominal duration   : {TEST_DURATION_SEC/60:.2f} minutes")
+    print()
+    print(f"fs                 : {FS/1e6:.3f} MHz  (features rescaled to {FS_REF/1e6:.1f} MHz)")
+    if LO_HZ is not None:
+        print(f"LO                 : {LO_HZ/1e6:.3f} MHz")
+    print(f"NSNAP              : {NSNAP} samples → {snap_dur_sec*1e6:.3f} µs per snap")
+    print(f"SNAP_PERIOD_SEC    : {SNAP_PERIOD_SEC} s (one snap every X seconds)")
+    print()
+    print(f"Loading model      : {MODEL_PATH}")
     model = joblib_load(MODEL_PATH)
     predict_fn, model_class_names, _ = normalize_model_labeler(model)
-    print("Model class names (from estimator):", model_class_names)
-    print("Canonical class order used for metrics:", MODEL_CLASS_NAMES)
+    print("Model classes (estimator):", model_class_names)
+    print("Canonical classes       :", MODEL_CLASS_NAMES)
+    print(f"NoJam veto enabled? {USE_NOJAM_VETO}")
 
-    # Logbook → intervals
+    print()
+    print(f"Parsing logbook     : {LOGBOOK_PATH}")
     intervals = parse_plaintext_logbook(LOGBOOK_PATH, LOCAL_DATE, LOCAL_UTC_OFFSET)
-    print(f"Loaded {len(intervals)} intervals from logbook.")
-    for a,b,lbl in intervals:
+    print(f"Loaded {len(intervals)} logbook intervals (UTC).")
+    for a, b, lbl in intervals:
         print(f"  {a.strftime('%H:%M:%S')}Z → {b.strftime('%H:%M:%S')}Z : {lbl}")
 
-    # Metrics accumulators (strict: only mapped GT)
     y_true: List[str] = []
     y_pred: List[str] = []
     rows: List[dict] = []
 
-    parser = SbfParser()
-    block_i = -1
-    saved = 0
-    next_save_t: Optional[datetime] = None
+    n_saved = 0
+    snap_count = 0
 
-    with open(SBF_PATH, "rb") as f:
-        while True:
-            chunk = f.read(CHUNK_BYTES)
-            if not chunk: break
-            for blk, infos in parser.parse(chunk):
-                if blk != "BBSamples":
-                    continue
-                block_i += 1
+    for snap_idx, x in iter_snaps_every_Xsec(RAW_PATH, FS, NSNAP, SNAP_PERIOD_SEC):
+        N = x.size
+        snap_count += 1
 
-                x, fs = decode_bbsamples_iq(infos)
-                if x is None: 
-                    continue
-                if DECIM and DECIM > 1:
-                    x = x[::DECIM]; fs = fs / DECIM
+        snap_start_rel = snap_idx * SNAP_PERIOD_SEC
+        snap_mid_rel   = snap_start_rel + 0.5 * (N / FS)
 
-                wnc, tow_s, tow_hms, utc_hms, utc_iso, utc_dt = extract_time_labels(infos)
+        snap_mid_abs_local = TEST_START_LOCAL + timedelta(seconds=snap_mid_rel)
+        snap_mid_abs_utc   = snap_mid_abs_local - timedelta(hours=LOCAL_UTC_OFFSET)
 
-                # 30 s gating (UTC)
-                if next_save_t is None:
-                    stride = int(SAVE_EVERY_SEC)
-                    floor = utc_dt.replace(second=(utc_dt.second // stride) * stride, microsecond=0)
-                    if floor > utc_dt:
-                        floor -= timedelta(seconds=stride)
-                    next_save_t = floor + timedelta(seconds=stride)
+        # Ramp phase classification
+        if 0.0 <= snap_mid_rel <= TEST_DURATION_SEC:
+            if snap_mid_rel < TEST_DURATION_SEC / 2.0:
+                phase = "ramp_up"
+            else:
+                phase = "ramp_down"
+        else:
+            phase = "outside_nominal_ramp"
 
-                if utc_dt < next_save_t:
-                    continue
-                while utc_dt >= next_save_t + timedelta(seconds=SAVE_EVERY_SEC):
-                    next_save_t += timedelta(seconds=SAVE_EVERY_SEC)
+        # Logbook / GT labels
+        log_label_raw = label_for_time(intervals, snap_mid_abs_utc)
+        gt_label = map_log_to_model(log_label_raw)
 
-                # Labels (GT from logbook; canonicalized)
-                log_label_raw = label_for_time(intervals, utc_dt)
-                gt_label  = map_log_to_model(log_label_raw)  # canonical or None
+        # Features + prediction
+        feats = extract_features(x, FS)
+        pred_label, pred_proba = predict_fn(feats)
+        pred_label = canon(pred_label)
 
-                # Feature extraction + prediction
-                feats = extract_features(x, fs)
-                pred_label, pred_proba = predict_fn(feats)
-                pred_label = canon(pred_label)
+        veto_applied = False
+        veto_diag = {}
+        if pred_label is not None:
+            pred_label, veto_applied, veto_diag = apply_nojam_veto(pred_label, pred_proba, feats)
 
-                # Optional NoJam veto
-                veto_applied = False
-                veto_meta = {}
-                if pred_label is not None:
-                    pred_label, veto_applied, veto_meta = apply_nojam_veto(pred_label, pred_proba, feats)
+        if gt_label is not None and pred_label is not None:
+            y_true.append(gt_label)
+            y_pred.append(pred_label)
 
-                # accumulate metrics when GT is known (strict)
-                if gt_label is not None and pred_label is not None:
-                    y_true.append(gt_label)
-                    y_pred.append(pred_label)
+        if DEBUG_PRINT_SNAP_LOG:
+            print(
+                f"[snap {snap_idx:04d}] "
+                f"t_mid_local={snap_mid_abs_local.strftime('%H:%M:%S')} "
+                f"GT={gt_label} | Pred={pred_label} | Veto={veto_applied} "
+                f"| log_label={log_label_raw}"
+            )
 
-                if DEBUG_PRINT_SAMPLE_LABELS:
-                    print(f"[{utc_iso}] GT={gt_label} | Pred={pred_label} | Veto={veto_applied}")
+        # Save plot
+        if SAVE_IMAGES:
+            out_path = plot_and_save_snap(
+                snap_idx=snap_idx,
+                x=x,
+                fs=FS,
+                out_dir=out_dir,
+                t_mid_rel=snap_mid_rel,
+                t_mid_abs_local=snap_mid_abs_local,
+                lo_hz=LO_HZ,
+                phase=phase,
+                log_label_raw=log_label_raw,
+                gt_label=gt_label,
+                pred_label=pred_label,
+                pred_proba=pred_proba,
+            )
+        else:
+            out_path = None
 
-                # save plot
-                if SAVE_IMAGES:
-                    _ = plot_and_save(
-                        block_idx=block_i, x=x, fs=fs,
-                        wnc=wnc, tow_s=tow_s, tow_hms=tow_hms,
-                        utc_hms=utc_hms, utc_iso=utc_iso, utc_dt=utc_dt,
-                        log_label=log_label_raw, gt_label=gt_label,
-                        pred_label=pred_label, pred_proba=pred_proba,
-                        out_dir=out_dir,
-                        nperseg=NPERSEG, noverlap=NOVERLAP,
-                        remove_dc=REMOVE_DC, vmin=VMIN_DB, vmax=VMAX_DB
-                    )
-                    saved += 1
-                    if saved % 200 == 0:
-                        print(f"Saved {saved} figures...")
+        n_saved += 1
 
-                # per-sample row (add veto/proba diagnostics)
-                row = {
-                    "block_idx": block_i,
-                    "utc_iso": utc_iso,
-                    "gps_week": int(wnc),
-                    "tow_s": float(tow_s),
-                    "log_label_raw": log_label_raw,
-                    "gt_label": gt_label,
-                    "pred_label_raw": canon(pred_label),   # after veto, canonical
-                    "veto_applied": bool(veto_applied),
-                    "fs_hz": float(fs),
-                }
-                # lightweight proba diagnostics (if available)
-                if isinstance(pred_proba, dict):
-                    row.update({
-                        "p_NoJam": float(pred_proba.get("NoJam", 0.0)),
-                        "p_Chirp": float(pred_proba.get("Chirp", 0.0)),
-                        "p_NB": float(pred_proba.get("NB", 0.0)),
-                        "p_CW": float(pred_proba.get("CW", 0.0)),
-                        "p_WB": float(pred_proba.get("WB", 0.0)),
-                        "p_FH": float(pred_proba.get("FH", 0.0)),
-                    })
-                if veto_meta:
-                    row.update({
-                        "veto_p_top": float(veto_meta.get("p_top", 0.0)),
-                        "veto_p_nojam": float(veto_meta.get("p_nojam", 0.0)),
-                        "veto_pre_rms": float(veto_meta.get("pre_rms", 0.0)),
-                    })
-                # always include pre_rms from features for tuning
-                row["pre_rms"] = float(feats[PRE_RMS_IDX])
-                rows.append(row)
+        row = {
+            "snap_idx": snap_idx,
+            "t_mid_local": snap_mid_abs_local.isoformat(timespec="milliseconds"),
+            "t_mid_utc": snap_mid_abs_utc.replace(tzinfo=timezone.utc).isoformat(timespec="milliseconds"),
+            "t_mid_rel_s": float(snap_mid_rel),
+            "phase": phase,
+            "log_label_raw": log_label_raw,
+            "gt_label": gt_label,
+            "pred_label": pred_label,
+            "veto_applied": bool(veto_applied),
+            "fs_hz": float(FS),
+            "pre_rms": float(feats[PRE_RMS_IDX]),
+        }
 
-                next_save_t = next_save_t + timedelta(seconds=SAVE_EVERY_SEC)
+        if isinstance(pred_proba, dict):
+            row.update({
+                "p_NoJam": float(pred_proba.get("NoJam", 0.0)),
+                "p_Chirp": float(pred_proba.get("Chirp", 0.0)),
+                "p_NB": float(pred_proba.get("NB", 0.0)),
+                "p_CW": float(pred_proba.get("CW", 0.0)),
+                "p_WB": float(pred_proba.get("WB", 0.0)),
+                "p_FH": float(pred_proba.get("FH", 0.0)),
+            })
+        if veto_diag:
+            row.update({
+                "veto_p_top": float(veto_diag.get("p_top", 0.0)),
+                "veto_p_nojam": float(veto_diag.get("p_nojam", 0.0)),
+                "veto_pre_rms": float(veto_diag.get("pre_rms", 0.0)),
+            })
+        rows.append(row)
 
-    # ---- metrics (strict on known GT)
-    print("\n=== METRICS (strict, only mapped GT) ===")
+        print(
+            f"[{n_saved:03d}] snap {snap_idx:04d} | "
+            f"t_mid_local={snap_mid_abs_local.strftime('%H:%M:%S')} | "
+            f"phase={phase:18s} | "
+            f"log={log_label_raw or '-':15s} | "
+            f"GT={gt_label or '-':6s} | "
+            f"Pred={pred_label or '-':6s} | "
+            f"pre_rms={row['pre_rms']:.4f} | "
+            f"png={out_path.name if out_path else 'None'}"
+        )
+
+        if MAX_SNAPS is not None and n_saved >= MAX_SNAPS:
+            break
+
+    print(f"\nProcessed {snap_count} snaps; saved {n_saved} entries.")
+
+    # ---- METRICS (only where GT known) ----
+    print("\n=== METRICS (only snaps with mapped GT) ===")
     if len(y_true) == 0:
-        print("No blocks with mapped ground-truth. Refine LOG_TO_MODEL using the official plan.")
+        print("No snaps with mapped ground-truth from logbook.")
     else:
-        # Sanity histograms
         ct_true = Counter(y_true)
         ct_pred = Counter(y_pred)
         print("GT counts:", dict(ct_true))
         print("Pred counts:", dict(ct_pred))
 
-        # Fixed canonical order so missing classes are obvious
-        labels_for_metrics = MODEL_CLASS_NAMES[:]  # always full, fixed order
+        labels_for_metrics = MODEL_CLASS_NAMES[:]
 
         cm = confusion_matrix(y_true, y_pred, labels=labels_for_metrics)
         acc = accuracy_score(y_true, y_pred)
@@ -1021,25 +1253,30 @@ def main():
         print("\nConfusion matrix (labels order):", labels_for_metrics)
         print(cm)
         print("\nClassification report:")
-        print(classification_report(y_true, y_pred, labels=labels_for_metrics, zero_division=0))
+        print(classification_report(y_true, y_pred,
+                                    labels=labels_for_metrics,
+                                    zero_division=0))
 
-        # Plot CM
-        fig = plt.figure(figsize=(1.1*len(labels_for_metrics)+2, 1.0*len(labels_for_metrics)+2))
+        fig = plt.figure(figsize=(1.1*len(labels_for_metrics)+2,
+                                  1.0*len(labels_for_metrics)+2))
         ax = fig.add_subplot(111)
         im = ax.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
         plt.colorbar(im, ax=ax, fraction=0.046)
-        ax.set_xticks(range(len(labels_for_metrics))); ax.set_xticklabels(labels_for_metrics, rotation=45, ha="right")
-        ax.set_yticks(range(len(labels_for_metrics))); ax.set_yticklabels(labels_for_metrics)
-        ax.set_xlabel("Predicted"); ax.set_ylabel("True")
+        ax.set_xticks(range(len(labels_for_metrics)))
+        ax.set_xticklabels(labels_for_metrics, rotation=45, ha="right")
+        ax.set_yticks(range(len(labels_for_metrics)))
+        ax.set_yticklabels(labels_for_metrics)
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("True")
         for i in range(cm.shape[0]):
             for j in range(cm.shape[1]):
-                ax.text(j, i, str(cm[i,j]), ha="center", va="center", fontsize=9)
+                ax.text(j, i, str(cm[i, j]),
+                        ha="center", va="center", fontsize=9)
         fig.tight_layout()
-        fig.savefig(Path(OUT_DIR) / "confusion_matrix.png", dpi=160, bbox_inches="tight")
+        fig.savefig(out_dir / "confusion_matrix.png", dpi=160, bbox_inches="tight")
         plt.close(fig)
 
-        # Write textual metrics
-        with open(Path(OUT_DIR) / "metrics.txt", "w", encoding="utf-8") as fh:
+        with open(out_dir / "metrics.txt", "w", encoding="utf-8") as fh:
             fh.write(f"Accuracy: {acc:.6f}\n")
             fh.write(f"Labels (fixed order): {labels_for_metrics}\n")
             fh.write("GT counts:\n")
@@ -1052,38 +1289,47 @@ def main():
             for r in cm:
                 fh.write(",".join(map(str, r)) + "\n")
             fh.write("\nClassification report:\n")
-            fh.write(classification_report(y_true, y_pred, labels=labels_for_metrics, zero_division=0))
+            fh.write(classification_report(y_true, y_pred,
+                                           labels=labels_for_metrics,
+                                           zero_division=0))
 
-    # per-sample CSV
+    # ---- per-snap CSV ----
     if SAVE_PER_SAMPLE_CSV and rows:
-        csv_path = Path(OUT_DIR) / "samples_log.csv"
+        csv_path = out_dir / "kraken_snaps_log.csv"
         with open(csv_path, "w", newline="", encoding="utf-8") as fh:
-            # ensure stable field order
-            fieldnames = ["block_idx","utc_iso","gps_week","tow_s",
-                          "log_label_raw","gt_label","pred_label_raw","veto_applied",
-                          "fs_hz","pre_rms",
-                          "p_NoJam","p_Chirp","p_NB","p_CW","p_WB","p_FH",
-                          "veto_p_top","veto_p_nojam","veto_pre_rms"]
-            # include only those that appear
+            fieldnames = ["snap_idx", "t_mid_local", "t_mid_utc", "t_mid_rel_s",
+                          "phase", "log_label_raw", "gt_label", "pred_label",
+                          "veto_applied", "fs_hz", "pre_rms",
+                          "p_NoJam", "p_Chirp", "p_NB", "p_CW", "p_WB", "p_FH",
+                          "veto_p_top", "veto_p_nojam", "veto_pre_rms"]
             present = set().union(*[set(r.keys()) for r in rows])
-            fieldnames = [f for f in fieldnames if f in present] + [f for f in rows[0].keys() if f not in fieldnames]
+            fieldnames = [f for f in fieldnames if f in present] + \
+                         [f for f in rows[0].keys() if f not in fieldnames]
             w = csv.DictWriter(fh, fieldnames=fieldnames)
             w.writeheader()
             for r in rows:
                 w.writerow(r)
-        print(f"Wrote per-sample log to: {csv_path}")
+        print(f"Wrote per-snap log to: {csv_path}")
 
+    # ---- summary JSON ----
     if SUMMARY_JSON:
         js = {
-            "sbf_path": SBF_PATH,
+            "raw_path": RAW_PATH,
+            "out_dir": str(out_dir),
             "model_path": MODEL_PATH,
             "model_classes": MODEL_CLASS_NAMES,
-            "log_to_model_mapping_used": LOG_TO_MODEL,
-            "n_images_saved": saved if SAVE_IMAGES else 0,
-            "save_every_sec": SAVE_EVERY_SEC,
-            "decim": DECIM,
+            "logbook_path": LOGBOOK_PATH,
+            "local_date": LOCAL_DATE,
+            "local_utc_offset": LOCAL_UTC_OFFSET,
+            "test_id": TEST_ID,
+            "test_name": TEST_NAME,
+            "snap_nsamples": NSNAP,
+            "fs_hz": FS,
+            "fs_ref_hz": FS_REF,
+            "snap_period_sec": SNAP_PERIOD_SEC,
             "feature_count": len(FEATURE_NAMES),
             "feature_names": FEATURE_NAMES,
+            "freq_feature_names": FREQ_FEATURE_NAMES,
             "spectrogram_plot": {
                 "nperseg": NPERSEG, "noverlap": NOVERLAP,
                 "vmin_db": VMIN_DB, "vmax_db": VMAX_DB
@@ -1094,11 +1340,16 @@ def main():
                 "P_NOJAM_MIN": P_NOJAM_MIN,
                 "ENERGY_RMS_MAX": ENERGY_RMS_MAX,
                 "P_NOJAM_LOWPOW": P_NOJAM_LOWPOW
-            }
+            },
+            "n_snaps_processed": snap_count,
+            "n_snaps_saved": n_saved,
         }
-        with open(Path(OUT_DIR) / "summary.json", "w", encoding="utf-8") as fh:
+        with open(out_dir / "summary.json", "w", encoding="utf-8") as fh:
             json.dump(js, fh, indent=2)
         print("Wrote summary.json")
+
+    print("\nDone.")
+
 
 if __name__ == "__main__":
     main()
