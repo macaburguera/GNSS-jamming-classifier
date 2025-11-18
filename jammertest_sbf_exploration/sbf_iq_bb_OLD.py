@@ -122,7 +122,7 @@ def plot_and_save(block_idx, x, fs, wnc, tow_s, tow_hms, utc_hms, utc_iso,
 
 def main():
     ap = argparse.ArgumentParser(description="One spectrogram per 30-second UTC slot (IQ together).")
-    ap.add_argument("sbf_path")
+    ap.add_argument("--sbf_path", default=r"C:\Users\macab\OneDrive - Danmarks Tekniske Universitet\Geopositioning and Navigation - Jammertest 2023\23.09.19 - Jammertest 2023 - Day 2\alt02 - reference during kraken test at location 2 for smartphone comparison.sbf")
     ap.add_argument("--out-dir", default="out_spectrograms")
     ap.add_argument("--max-blocks", type=int, default=100, help="Max figures to save")
     ap.add_argument("--skip", type=int, default=0, help="Skip first N BBSamples blocks")

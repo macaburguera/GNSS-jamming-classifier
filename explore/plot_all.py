@@ -16,7 +16,7 @@ PLOTS_DIR = BASE_DIR.parent / "plots"
 PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # <<< NEW: limit of observations per class
-MAX_OBS_PER_CLASS = 5   # <-- set your "XX" here
+MAX_OBS_PER_CLASS = 10   # <-- set your "XX" here
 
 # Variable names saved by your generator
 VAR_IQ   = "GNSS_plus_Jammer_awgn"
@@ -28,8 +28,8 @@ N_SNAP_TARGET   = 2048
 T_SNAP_S        = N_SNAP_TARGET / FS_SNAP_TARGET  # 32.768 us
 
 # STFT (matches the style you used before)
-NPERSEG   = 128
-NOVERLAP  = 96
+NPERSEG   = 64
+NOVERLAP  = 56
 NFFT      = 128
 
 # Visualization

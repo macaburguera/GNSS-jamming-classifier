@@ -8,7 +8,7 @@ import itertools
 import h5py
 
 # ================== CONFIG (Jammertest-like) ==================
-BASE_DIR = Path(r"D:\datasets\maca_gen\datasets_jammertest\TEST")
+BASE_DIR = Path(r"D:\datasets\maca_gen\datasets_jammertest\TRAIN")
 CLASSES  = ["WB", "NB", "NoJam", "CW", "Chirp", "FH"]
 
 # Variable names saved by your generator
