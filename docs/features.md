@@ -37,7 +37,7 @@ We first compute the raw RMS power and normalize the signal:
 - **Raw RMS power**
 
 $$
-  \text{pre\_rms} = \sqrt{\frac{1}{N} \sum_{n=0}^{N-1} |x[n]|^2}.
+  \text{pre} = \sqrt{\frac{1}{N} \sum_{n=0}^{N-1} |x[n]|^2}.
 $$
 
 - **Normalized complex samples**
@@ -45,7 +45,7 @@ $$
 $$
   z[n] =
     \begin{cases}
-      \dfrac{x[n]}{\text{pre\_rms}}, & \text{if } \text{pre\_rms} > 0 \\
+      \dfrac{x[n]}{\text{pre}}, & \text{if } \text{pre} > 0 \\
       x[n], & \text{otherwise}
     \end{cases}
 $$
@@ -67,7 +67,7 @@ For a real sequence $x[n]$,
 
 $$
   \text{ZCR}(x) \approx
-  \frac{\#\{n: x[n]\;\text{and}\;x[n+1]\;\text{have opposite signs}\}}{N-1}.
+  \frac{\left|\{n: x[n]\;\text{and}\;x[n+1]\;\text{have opposite signs}\}\right|}{N-1}.
 $$
 
 **Intuition**: high ZCR → the signal oscillates fast (more “high-frequency stuff” in time domain).
@@ -163,7 +163,7 @@ $$
    - **Formula**:
 
 $$
-     \text{mag\_mean} = \frac{1}{N} \sum_n |z[n]|.
+     \text{mag} = \frac{1}{N} \sum_n |z[n]|.
 $$
 
 7. **`mag_std`**
@@ -174,7 +174,7 @@ $$
    - **Formula**:
 
 $$
-     \text{mag\_std} = \sqrt{\frac{1}{N} \sum_n (|z[n]| - \text{mag\_mean})^2}.
+     \text{mag} = \sqrt{\frac{1}{N} \sum_n (|z[n]| - \text{mag})^2}.
 $$
 
 ### 1.2 Zero crossings and PAPR
@@ -185,7 +185,7 @@ $$
    - **Formula**:
 
 $$
-     \text{ZCR\_I} = \text{ZCR}(I[n]).
+     \text{ZCR} = \text{ZCR}(I[n]).
 $$
 
 9. **`ZCR_Q`**
@@ -194,7 +194,7 @@ $$
    - **Formula**:
 
 $$
-     \text{ZCR\_Q} = \text{ZCR}(Q[n]).
+     \text{ZCR} = \text{ZCR}(Q[n]).
 $$
 
 10. **`PAPR_dB`**
@@ -205,7 +205,7 @@ $$
     - **Formula**:
 
 $$
-      \text{PAPR\_dB} =
+      \text{PAPR} =
         20 \log_{10}
         \left(
           \frac{\max_n |z[n]| + \varepsilon}{\frac{1}{N} \sum_n |z[n]| + \varepsilon}
@@ -228,7 +228,7 @@ $$
 r[k] = \frac{\text{AC}[k]}{\text{AC}[0]}.
 $$
 
-We only look at lags up to $k_\text{max} \approx \text{MAX\_LAG\_S} \cdot f_s$.
+We only look at lags up to $k_\text{max} \approx \text{MAX LAG} \cdot f_s$.
 
 11. **`env_ac_peak`**
 
@@ -237,7 +237,7 @@ We only look at lags up to $k_\text{max} \approx \text{MAX\_LAG\_S} \cdot f_s$.
    - **Formula**:
 
 $$
-     \text{env\_ac\_peak} = \max_{1 \le k \le k_\text{max}} r[k].
+     \text{env ac} = \max_{1 \le k \le k_\text{max}} r[k].
 $$
 
 12. **`env_ac_lag_s`**
@@ -247,7 +247,7 @@ $$
 
 $$
      k^* = \arg\max_{1 \le k \le k_\text{max}} r[k],\quad
-     \text{env\_ac\_lag\_s} = \frac{k^*}{f_s}.
+     \text{env ac lag} = \frac{k^*}{f_s}.
 $$
 
 ### 1.4 Raw power, out-of-band, crest, kurtosis, entropy
@@ -258,7 +258,7 @@ $$
    - **Formula**:
 
 $$
-     \text{pre\_rms} = \sqrt{\frac{1}{N} \sum_n |x[n]|^2}.
+     \text{pre} = \sqrt{\frac{1}{N} \sum_n |x[n]|^2}.
 $$
 
 14. **`psd_power`**
@@ -267,7 +267,7 @@ $$
    - **Formula**:
 
 $$
-     \text{psd\_power} = \sum_k P_{xx0}[k],
+     \text{psd} = \sum_k P_{xx0}[k],
 $$
 
      where $P_{xx0}$ is the Welch PSD of $x[n]$.
@@ -275,7 +275,7 @@ $$
 15. **`oob_ratio`**
 
    - **Intuition**: How much power lives **outside** the “interesting” in-band GNSS window (e.g. wideband jammer).
-   - **Formula** (with in-band half-bandwidth $B=\text{INB\_BW\_HZ}$):
+   - **Formula** (with in-band half-bandwidth $B=\text{INB BW}$):
 
 $$
      \mathcal{I} = \{k : |f_k| \le B\}, \quad
@@ -283,7 +283,7 @@ $$
 $$
 
 $$
-     \text{oob\_ratio} =
+     \text{oob} =
        \frac{\sum_{k \in \mathcal{O}} P_{xx0}[k]}{\sum_{k \in \mathcal{I}} P_{xx0}[k] + \varepsilon}.
 $$
 
@@ -293,7 +293,7 @@ $$
    - **Formula**:
 
 $$
-     \text{crest\_env} =
+     \text{crest} =
        \frac{\max_n \text{env}_\text{raw}[n]}{\frac{1}{N} \sum_n \text{env}_\text{raw}[n] + \varepsilon}.
 $$
 
@@ -305,7 +305,7 @@ $$
    - **Formula** (population kurtosis):
 
 $$
-     \text{kurt\_env} =
+     \text{kurt} =
        \frac{\mathbb{E}\left[(\text{env}_\text{raw} - \mu)^4\right]}{\big(\mathbb{E}[(\text{env}_\text{raw} - \mu)^2]\big)^2},
 $$
 
@@ -324,7 +324,7 @@ $$
 $$
 
 $$
-     \text{spec\_entropy} = -\sum_k P^\text{prob}_{xx0}[k] \,\log\big(P^\text{prob}_{xx0}[k]\big).
+     \text{spec} = -\sum_k P^\text{prob}_{xx0}[k] \,\log\big(P^\text{prob}_{xx0}[k]\big).
 $$
 
 ---
@@ -356,7 +356,7 @@ $$
    - **Formula**:
 
 $$
-     \text{spec\_centroid\_Hz} =
+     \text{spec centroid} =
        \sum_k f_k \, P^\text{norm}_{xx}[k].
 $$
 
@@ -366,9 +366,9 @@ $$
    - **Formula**:
 
 $$
-     \text{spec\_spread\_Hz} =
+     \text{spec spread} =
        \sqrt{
-         \sum_k (f_k - \text{spec\_centroid\_Hz})^2 \, P^\text{norm}_{xx}[k]
+         \sum_k (f_k - \text{spec centroid})^2 \, P^\text{norm}_{xx}[k]
        }.
 $$
 
@@ -379,7 +379,7 @@ $$
    - **Formula** (Wiener flatness):
 
 $$
-     \text{spec\_flatness} =
+     \text{spec} =
        \frac{
          \exp\left( \frac{1}{K} \sum_k \ln(P^\text{norm}_{xx}[k]) \right)
        }{
@@ -399,7 +399,7 @@ $$
      find smallest $m$ with $C[m] \ge 0.95$, then
 
 $$
-     \text{spec\_rolloff95\_Hz} = f_m.
+     \text{spec rolloff95} = f_m.
 $$
 
 23. **`spec_peak_freq_Hz`**
@@ -409,7 +409,7 @@ $$
 
 $$
      k^* = \arg\max_k P^\text{norm}_{xx}[k], \quad
-     \text{spec\_peak\_freq\_Hz} = f_{k^*}.
+     \text{spec peak freq} = f_{k^*}.
 $$
 
 24. **`spec_peak_power`**
@@ -418,7 +418,7 @@ $$
    - **Formula**:
 
 $$
-     \text{spec\_peak\_power} = P^\text{norm}_{xx}[k^*].
+     \text{spec peak} = P^\text{norm}_{xx}[k^*].
 $$
 
 ---
@@ -492,7 +492,7 @@ then clip out extreme percentiles for robustness.
 - **Formula** (with $M=N-1$):
 
 $$
-  \text{instf\_mean\_Hz} = \frac{1}{M} \sum_{k=0}^{M-1} f_\text{inst}[k].
+  \text{instf mean} = \frac{1}{M} \sum_{k=0}^{M-1} f_\text{inst}[k].
 $$
 
 34. **`instf_std_Hz`**
@@ -501,7 +501,7 @@ $$
 - **Formula**:
 
 $$
-  \text{instf\_std\_Hz} = \sqrt{\frac{1}{M} \sum_k (f_\text{inst}[k] - \text{instf\_mean\_Hz})^2}.
+  \text{instf std} = \sqrt{\frac{1}{M} \sum_k (f_\text{inst}[k] - \text{instf mean})^2}.
 $$
 
 35. **`instf_slope_Hzps`**
@@ -513,7 +513,7 @@ $$
 - **Formula**: least-squares fit $f_\text{inst}[k] \approx a t_k + b$ with $t_k = k/f_s$:
 
 $$
-  \text{instf\_slope\_Hzps} = a.
+  \text{instf slope} = a.
 $$
 
 36. **`instf_kurtosis`**
@@ -522,7 +522,7 @@ $$
 - **Formula** (population kurtosis):
 
 $$
-  \text{instf\_kurtosis} =
+  \text{instf} =
     \frac{\mathbb{E}\big[(f_\text{inst} - \mu_f)^4\big]}
          {\big(\mathbb{E}[(f_\text{inst}-\mu_f)^2]\big)^2}.
 $$
@@ -537,7 +537,7 @@ $$
 $$
 
 $$
-  \text{instf\_dZCR\_per\_s} = \text{ZCR}(d_f)\cdot f_s.
+  \text{instf dZCR per} = \text{ZCR}(d_f)\cdot f_s.
 $$
 
 ---
@@ -581,7 +581,7 @@ $$
   - With quefrency $q/f_s$ in $[q_\min,q_\max]$ (e.g. $[2\cdot10^{-4},5\cdot10^{-3}]$ s):
 
 $$
-    \text{cep\_peak\_env} = \max_{q \in [q_\min,q_\max]} c[q].
+    \text{cep peak} = \max_{q \in [q_\min,q_\max]} c[q].
 $$
 
 39. **`dme_pulse_count`**
@@ -595,7 +595,7 @@ $$
   - Rising edges $r[n] = 1$ when $a[n]=1$ and $a[n-1]=0$.
 
 $$
-  \text{dme\_pulse\_count} = \sum_n r[n].
+  \text{dme pulse} = \sum_n r[n].
 $$
 
 40. **`dme_duty`**
@@ -604,7 +604,7 @@ $$
 - **Formula**:
 
 $$
-  \text{dme\_duty} = \frac{1}{N}\sum_n a[n].
+  \text{dme} = \frac{1}{N}\sum_n a[n].
 $$
 
 41. **`nb_peak_salience`**
@@ -619,7 +619,7 @@ $$
   - Remaining: $P_\text{rest} = 1 - P_\text{top}$.
 
 $$
-  \text{nb\_peak\_salience} = \frac{P_\text{top}}{P_\text{rest} + \varepsilon}.
+  \text{nb peak} = \frac{P_\text{top}}{P_\text{rest} + \varepsilon}.
 $$
 
 ---
@@ -650,7 +650,7 @@ This group refines the view on **narrowband tones**, **AM behaviour**, and **chi
   - Use `find_peaks` (SciPy) with this prominence to get peak index set $\mathcal{P}$.
 
 $$
-  \text{nb\_peak\_count} = |\mathcal{P}|.
+  \text{nb peak} = |\mathcal{P}|.
 $$
 
 43. **`nb_spacing_med_Hz`**
@@ -665,9 +665,9 @@ $$
   - Spacings $s_j = f_{j+1} - f_j$.
 
 $$
-  \text{nb\_spacing\_med\_Hz} = \text{median}(s_j),
+  \text{nb spacing med} = \text{median}(s_j),
   \quad
-  \text{nb\_spacing\_std\_Hz} = \text{std}(s_j).
+  \text{nb spacing std} = \text{std}(s_j).
 $$
 
   If fewer than 2 peaks, both are 0.
@@ -684,7 +684,7 @@ Let $\text{env}[n]=|z[n]|$, mean $\mu$, zero-mean $e[n]=\text{env}[n]-\mu$.
 - **Formula**:
 
 $$
-  \text{env\_mod\_index} =
+  \text{env mod} =
     \frac{\mathbb{E}[(\text{env} - \mu)^2]}{\mu^2 + \varepsilon}.
 $$
 
@@ -703,11 +703,11 @@ $$
 
 $$
   k^* = \arg\max_{k\in \mathcal{B}_e} P_e[k],\quad
-  \text{env\_dom\_freq\_Hz} = f^{(e)}_{k^*},
+  \text{env dom freq} = f^{(e)}_{k^*},
 $$
 
 $$
-  \text{env\_dom\_peak\_norm} =
+  \text{env dom peak} =
     \frac{P_e[k^*]}{\sum_{k\in \mathcal{B}_e} P_e[k] + \varepsilon}.
 $$
 
@@ -722,7 +722,7 @@ We split $z[n]$ into $S$ equal segments and per segment compute the spectral cen
 - **Formula**: Fit $c_s \approx a t_s + b$ by least squares and take
 
 $$
-  \text{chirp\_slope\_Hzps} = a.
+  \text{chirp slope} = a.
 $$
 
 49. **`chirp_r2`**
@@ -741,7 +741,7 @@ $$
 $$
 
 $$
-  \text{chirp\_r2} = 1 - \frac{SS_\text{res}}{SS_\text{tot}}.
+  \text{chirp} = 1 - \frac{SS_\text{res}}{SS_\text{tot}}.
 $$
 
 ---
@@ -764,7 +764,7 @@ GNSS signals are **cyclostationary** at chip rate and have specific higher-order
 We define:
 
 $$
-\text{cyclo\_lag\_corr}(z,L) =
+\text{cyclo lag}(z,L) =
   \frac{\left|\sum_{n=0}^{N-L-1} z[n+L]\; \overline{z[n]}\right|}
        {\sqrt{\left(\sum_{n} |z[n+L]|^2\right)\left(\sum_{n} |z[n]|^2\right)} + \varepsilon}.
 $$
@@ -780,7 +780,7 @@ $$
 $$
 
 $$
-  \text{cyclo\_chip\_corr} = \text{cyclo\_lag\_corr}(z, L_1).
+  \text{cyclo chip} = \text{cyclo lag}(z, L_1).
 $$
 
 51. **`cyclo_2chip_corr`**
@@ -793,7 +793,7 @@ $$
 $$
 
 $$
-  \text{cyclo\_2chip\_corr} = \text{cyclo\_lag\_corr}(z, L_2).
+  \text{cyclo 2chip} = \text{cyclo lag}(z, L_2).
 $$
 
 ### 7.2. Higher-order cumulants
@@ -829,7 +829,7 @@ $$
 - **Formula**:
 
 $$
-  \text{cumulant\_c40\_mag} = |c_{40}|.
+  \text{cumulant c40} = |c_{40}|.
 $$
 
 53. **`cumulant_c42_mag`**
@@ -838,7 +838,7 @@ $$
 - **Formula**:
 
 $$
-  \text{cumulant\_c42\_mag} = |c_{42}|.
+  \text{cumulant c42} = |c_{42}|.
 $$
 
 ### 7.3. Spectral kurtosis
@@ -861,7 +861,7 @@ $$
 - **Formula**:
 
 $$
-  \text{spec\_kurtosis\_mean} =
+  \text{spec kurtosis} =
     \frac{1}{I} \sum_{i=1}^I \text{kurt}_i.
 $$
 
@@ -872,7 +872,7 @@ $$
 - **Formula**:
 
 $$
-  \text{spec\_kurtosis\_max} = \max_i \text{kurt}_i.
+  \text{spec kurtosis} = \max_i \text{kurt}_i.
 $$
 
 ### 7.4. Teager–Kaiser on envelope
@@ -892,7 +892,7 @@ $$
   then clamp $\psi[n]\ge0$ and
 
 $$
-  \text{tkeo\_env\_mean} =
+  \text{tkeo env} =
     \frac{\mathbb{E}[\psi[n]]}{\mathbb{E}[e[n]]^2 + \varepsilon}.
 $$
 
@@ -955,8 +955,8 @@ $$
 $$
 
 $$
-  \text{circularity\_mag} = |\rho|,\quad
-  \text{circularity\_phase\_rad} = \arg(\rho).
+  \text{circularity} = |\rho|,\quad
+  \text{circularity phase} = \arg(\rho).
 $$
 
 ---
@@ -1015,7 +1015,7 @@ $$
 $$
 
 $$
-  \text{env\_p95\_over\_p50} = \frac{p_{95}}{p_{50} + \varepsilon}.
+  \text{env p95 over} = \frac{p_{95}}{p_{50} + \varepsilon}.
 $$
 
 66. **`spec_symmetry_index`**
@@ -1030,7 +1030,7 @@ $$
 $$
 
 $$
-  \text{spec\_symmetry\_index} = \frac{P_+ - P_-}{P_+ + P_- + \varepsilon}.
+  \text{spec symmetry} = \frac{P_+ - P_-}{P_+ + P_- + \varepsilon}.
 $$
 
 67. **`dc_notch_ratio`**
@@ -1046,7 +1046,7 @@ $$
 $$
 
 $$
-  \text{dc\_notch\_ratio} = \frac{\sum_{k \in \mathcal{D}} P_{xx}[k]}{\sum_{k \in \mathcal{R}} P_{xx}[k] + \varepsilon}.
+  \text{dc notch} = \frac{\sum_{k \in \mathcal{D}} P_{xx}[k]}{\sum_{k \in \mathcal{R}} P_{xx}[k] + \varepsilon}.
 $$
 
 68. **`spec_peakiness_ratio`**
@@ -1057,7 +1057,7 @@ $$
 - **Formula**:
 
 $$
-  \text{spec\_peakiness\_ratio} =
+  \text{spec peakiness} =
     \frac{\max_k P_{xx}[k]}{\text{median}_k(P_{xx}[k]) + \varepsilon}.
 $$
 
@@ -1086,7 +1086,7 @@ $$
 Time hop:
 
 $$
-\Delta t = \frac{\text{STFT\_NPERSEG} - \text{STFT\_NOVERLAP}}{f_s}.
+\Delta t = \frac{\text{STFT} - \text{STFT}}{f_s}.
 $$
 
 Normalise each time column:
@@ -1113,7 +1113,7 @@ $$
 $$
 
 $$
-  \text{stft\_centroid\_std\_Hz} =
+  \text{stft centroid std} =
     \sqrt{\frac{1}{J}\sum_j (c_j - \overline{c})^2}.
 $$
 
@@ -1127,7 +1127,7 @@ $$
 $$
 
 $$
-  \text{stft\_centroid\_absderiv\_med\_Hzps} =
+  \text{stft centroid absderiv med} =
     \text{median}_j\left(\left|\frac{d_c[j]}{\Delta t}\right|\right).
 $$
 
@@ -1137,11 +1137,11 @@ $$
 - **Formula**:
 
 $$
-  \text{ZCR}(d_c) = \frac{\#\{j: d_c[j]\cdot d_c[j+1] < 0\}}{J-1},
+  \text{ZCR}(d_c) = \frac{\left|\{j: d_c[j]\cdot d_c[j+1] < 0\}\right|}{J-1},
 $$
 
 $$
-  \text{stft\_centroid\_zcr\_per\_s} =
+  \text{stft centroid zcr per} =
     \frac{\text{ZCR}(d_c)}{\Delta t}.
 $$
 
@@ -1159,13 +1159,13 @@ $$
 $$
 
 $$
-  N_\text{hops} = \#\{j : |d_c[j]| > T_\text{hop}\},
+  N_\text{hops} = \left|\{j : |d_c[j]| > T_\text{hop}\}\right|,
   \quad
   T_\text{dur} = (J-1)\Delta t,
 $$
 
 $$
-  \text{fh\_hop\_rate\_per\_s} = \frac{N_\text{hops}}{T_\text{dur} + \varepsilon}.
+  \text{fh hop rate per} = \frac{N_\text{hops}}{T_\text{dur} + \varepsilon}.
 $$
 
 73. **`strong_bins_mean`**
@@ -1188,7 +1188,7 @@ $$
 $$
 
 $$
-  \text{strong\_bins\_mean} =
+  \text{strong bins} =
     \frac{1}{I J} \sum_{i,j} \text{strong mask}_{i,j}.
 $$
 
@@ -1218,7 +1218,7 @@ $$
 $$
 
 $$
-  \text{cyclo\_halfchip\_corr} = \text{cyclo\_lag\_corr}(z, L_{\frac12}).
+  \text{cyclo halfchip} = \text{cyclo lag}(z, L_{\frac12}).
 $$
 
 75. **`cyclo_5chip_corr`**
@@ -1231,7 +1231,7 @@ $$
 $$
 
 $$
-  \text{cyclo\_5chip\_corr} = \text{cyclo\_lag\_corr}(z, L_5).
+  \text{cyclo 5chip} = \text{cyclo lag}(z, L_5).
 $$
 
 ### 11.2. Chirp curvature from STFT
@@ -1252,7 +1252,7 @@ $$
   and take
 
 $$
-  \text{chirp\_curvature\_Hzps2} = 2a.
+  \text{chirp curvature} = 2a.
 $$
 
 ### 11.3. DME interpulse intervals (IPIs)
@@ -1276,7 +1276,7 @@ $$
 - **Formula**:
 
 $$
-  \text{dme\_ipi\_med\_s} = \text{median}_k(\text{IPI}_k).
+  \text{dme ipi med} = \text{median}_k(\text{IPI}_k).
 $$
 
 78. **`dme_ipi_std_s`**
@@ -1287,7 +1287,7 @@ $$
 - **Formula**:
 
 $$
-  \text{dme\_ipi\_std\_s} = \text{std}_k(\text{IPI}_k).
+  \text{dme ipi std} = \text{std}_k(\text{IPI}_k).
 $$
 
 ---
