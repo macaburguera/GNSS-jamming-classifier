@@ -46,7 +46,7 @@ except Exception as e:
 
 # ---------------- Defaults ----------------
 DEFAULT_BASE = r"D:\datasets\maca_gen\datasets_jammertest"
-DEFAULT_CLASSES = "NoJam,Chirp,NB,CW,WB"
+DEFAULT_CLASSES = "NoJam,Chirp,NB,WB"
 DEFAULT_VAR = "GNSS_plus_Jammer_awgn"
 DEFAULT_FS = 60_000_000.0
 DEFAULT_TARGET_LEN = 2048

@@ -40,19 +40,19 @@ from collections import Counter
 from sbf_parser import SbfParser
 
 # ============================ USER VARIABLES ============================
-SBF_PATH   = r"D:\datasets\Jammertest2023_Day1\Altus06 - 150m\alt06001.sbf"
-OUT_DIR    = r"D:\datasets\Jammertest2023_Day1\plots\alt06001_predicted_30s_SIMXGB_modNB_jsrcnr30db"
+SBF_PATH   = r"D:\datasets\Jammertest2023_Day1\Altus01 - 5m\alt01002.sbf"
+OUT_DIR    = r"D:\datasets\Jammertest2023_Day1\plots\alt01002_predicted_10s_SIMXGB_4cl"
 LOGBOOK_PATH = r"D:\datasets\Jammertest2023_Day1\Testlog 23.09.18.txt"
 
 # ==> Point to YOUR new XGB model trained on 78 features & new classes:
-MODEL_PATH = r"..\artifacts\jammertest_sim\xgb_run_20251117_182853\xgb_20251117_182911\xgb_trainval.joblib"
+MODEL_PATH = r"..\artifacts\jammertest_sim\xgb_run_20251128_094818\xgb_20251128_094829\xgb_trainval.joblib"
 
 # Local test date/time (for logbook parsing)
 LOCAL_DATE       = "2023-09-18"   # date of the test in LOCAL time
 LOCAL_UTC_OFFSET = 2.0            # LOCAL - UTC (e.g., CEST=+2)
 
 # Sampling policy: keep first block at/after each boundary (UTC)
-SAVE_EVERY_SEC = 30.0             # 30-second cadence
+SAVE_EVERY_SEC = 10.0             # 30-second cadence
 
 # Optional decimation for features & plots (keep 1 for exact original fs)
 DECIM = 1
@@ -73,7 +73,7 @@ SUMMARY_JSON = True
 DEBUG_PRINT_SAMPLE_LABELS = False  # set True to verbose-print per-sample labels
 
 # New model class names (order must match your training labels)
-MODEL_CLASS_NAMES = ["NoJam", "Chirp", "NB", "CW", "WB", "FH"]
+MODEL_CLASS_NAMES = ["NoJam", "Chirp", "NB", "WB"]
 
 # Canonicalization dictionary (lowercase -> canonical)
 CANON = {c.lower(): c for c in MODEL_CLASS_NAMES}
@@ -796,7 +796,7 @@ def normalize_model_labeler(model):
             classes_attr = None
 
     if classes_attr is not None and len(classes_attr) > 0:
-        # If stored labels are ints 0..5, map via MODEL_CLASS_NAMES
+        # If stored labels are ints 0..N, map via MODEL_CLASS_NAMES
         arr = np.array(classes_attr)
         if np.issubdtype(arr.dtype, np.integer):
             idx_to_name = {int(i): MODEL_CLASS_NAMES[int(i)] for i in range(len(MODEL_CLASS_NAMES))}
@@ -985,9 +985,7 @@ def main():
                         "p_NoJam": float(pred_proba.get("NoJam", 0.0)),
                         "p_Chirp": float(pred_proba.get("Chirp", 0.0)),
                         "p_NB": float(pred_proba.get("NB", 0.0)),
-                        "p_CW": float(pred_proba.get("CW", 0.0)),
                         "p_WB": float(pred_proba.get("WB", 0.0)),
-                        "p_FH": float(pred_proba.get("FH", 0.0)),
                     })
                 if veto_meta:
                     row.update({
@@ -1062,7 +1060,7 @@ def main():
             fieldnames = ["block_idx","utc_iso","gps_week","tow_s",
                           "log_label_raw","gt_label","pred_label_raw","veto_applied",
                           "fs_hz","pre_rms",
-                          "p_NoJam","p_Chirp","p_NB","p_CW","p_WB","p_FH",
+                          "p_NoJam","p_Chirp","p_NB","p_WB",
                           "veto_p_top","veto_p_nojam","veto_pre_rms"]
             # include only those that appear
             present = set().union(*[set(r.keys()) for r in rows])

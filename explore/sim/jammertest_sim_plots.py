@@ -9,7 +9,7 @@ import h5py
 
 # ================== CONFIG (Jammertest-like) ==================
 BASE_DIR = Path(r"D:\datasets\maca_gen\datasets_jammertest\TRAIN")
-CLASSES  = ["WB", "NB", "NoJam", "CW", "Chirp", "FH"]
+CLASSES  = ["WB", "NB", "NoJam", "Chirp"]
 
 # Variable names saved by your generator
 VAR_IQ   = "GNSS_plus_Jammer_awgn"

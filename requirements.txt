@@ -1,0 +1,17 @@
+# Core scientific stack
+numpy
+scipy
+pandas
+matplotlib
+
+# Machine learning
+scikit-learn
+xgboost
+torch
+
+# IO / utilities
+h5py
+joblib
+
+# Optional (only used in zenodo_old/prepare_minirocket.py)
+sktime

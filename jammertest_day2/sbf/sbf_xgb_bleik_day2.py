@@ -24,13 +24,13 @@ from sbf_parser import SbfParser
 # ============================ CONFIG ============================
 
 # Paths
-SBF_PATH   = r"C:\Users\macab\OneDrive - Danmarks Tekniske Universitet\Geopositioning and Navigation - Jammertest 2023\23.09.19 - Jammertest 2023 - Day 2\alt02 - reference during kraken test at location 2 for smartphone comparison.sbf"
-OUT_DIR    = r"D:\datasets\Jammertest2026_Day2\alt02-sbf-morning\out_alt02_hp20w_10s_multiband"
-MODEL_PATH = r"..\artifacts\jammertest_sim\xgb_run_20251117_182853\xgb_20251117_182911\xgb_trainval.joblib"
+SBF_PATH   = r"E:\Jammertest23\23.09.19 - Jammertest 2023 - Day 2\alt02 - reference during kraken test at location 2 for smartphone comparison.sbf"
+OUT_DIR    = r"E:\Jammertest23\Plots\Day2\sbf\out_alt02_hp20w_1s_multiband"
+MODEL_PATH = r"C:\Users\macab\OneDrive - Danmarks Tekniske Universitet\1. DTU\4. Fall 2025\gnss jamming\GNSS-jamming-classifier\artifacts\jammertest_sim\xgb_run_20251117_182853\xgb_20251117_182911\xgb_trainval.joblib"
 
 # Sampling policy: one IQ snap & plot every X seconds (UTC) *per LO/band*
-SAMPLE_PERIOD_SEC = 30.0     # e.g. 10, 15, 30...
-MAX_SAMPLES       = 600      # max total number of samples / plots (all bands combined)
+SAMPLE_PERIOD_SEC = 5     # e.g. 10, 15, 30...
+MAX_SAMPLES       = 6000      # max total number of samples / plots (all bands combined)
 
 # Optional decimation of IQ before features + spectrogram
 DECIM         = 1            # 1 = no decimation

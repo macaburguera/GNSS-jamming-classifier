@@ -28,7 +28,7 @@ def parse_args():
     p.add_argument("--out", type=str, default="../artifacts/jammertest_sim",
                    help="Artifacts root; NPZs saved under out/prep_run_YYYYmmdd_HHMMSS")
     p.add_argument("--classes", type=str,
-                   default="NoJam,Chirp,NB,CW,WB,FH",
+                   default="NoJam,Chirp,NB,WB",
                    help="Comma-separated class names (= subfolder names).")
     p.add_argument("--dry_per_class", type=int, default=None,
                    help="Cap #files per class for a quick run. None = use all.")

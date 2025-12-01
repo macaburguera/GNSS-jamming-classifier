@@ -45,11 +45,11 @@ from sbf_parser import SbfParser
 
 # ============================ USER VARIABLES ============================
 SBF_PATH   = r"D:\datasets\Jammertest2023_Day1\Altus06 - 150m\alt06001.sbf"
-OUT_DIR    = r"D:\datasets\Jammertest2023_Day1\plots\alt06001_predicted_30s_SIMCNN_nb"
+OUT_DIR    = r"D:\datasets\Jammertest2023_Day1\plots\alt06001_predicted_10s_SIMCNN_4cl"
 LOGBOOK_PATH = r"D:\datasets\Jammertest2023_Day1\Testlog 23.09.18.txt"
 
 # CNN checkpoint (.pt) produced by train_eval_cnn_rawiq.py
-MODEL_PATH = r"..\artifacts\jammertest_sim\cnn_run_20251116_220111\model.pt"
+MODEL_PATH = r"..\artifacts\jammertest_sim\cnn_run_20251128_185416\model.pt"
 
 # Local test date/time for logbook parsing
 LOCAL_DATE       = "2023-09-18"   # date of the test in LOCAL time
