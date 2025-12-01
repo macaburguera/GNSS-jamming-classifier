@@ -300,5 +300,4 @@ paths, model, sampling period, STFT settings, etc.
   High-level overview of the full pipeline:
   synthetic training → model artifacts → Day 1 / Day 2 validation → legacy Zenodo experiments.
 
-If you add new experiments or models, extend `docs/` so the README stays short
-and the detailed explanations live in separate documents.
+

@@ -361,20 +361,3 @@ This folder documents an earlier exploration phase based on a public Zenodo data
 These scripts are **not required** for the main Jammertest pipeline, but they
 capture design decisions and older experiments.
 
----
-
-## 5. Where to look next
-
-- If you want to change or extend the **feature set**, start from:
-  - `docs/features.md`
-  - `sim_train/data_preparation_xgb.py`
-  - any script calling `extract_features(iq, fs)`
-
-- If you want to adjust the **label taxonomy** or GT mapping, look into:
-  - `jammertest_day1/validation_xgb_day1.py`
-  - `jammertest_day2/sdr/sdr_xgb_bleik_d2.py`
-
-- If you want to plug in **new models** (e.g., different CNNs or transformers),
-  use:
-  - `train_eval_cnn_rawiq.py` as a template for training,
-  - `validation_cnn_day1.py` / `sdr_xgb_bleik_d2.py` as templates for inference.
