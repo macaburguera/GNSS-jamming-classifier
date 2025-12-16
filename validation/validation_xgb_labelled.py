@@ -43,13 +43,13 @@ from collections import Counter
 # ============================ USER VARIABLES ============================
 
 # Path to the labels CSV produced by label_gui.py
-LABELS_CSV = r"E:\Jammertest23\23.09.18 - Jammertest 2023 - Day 1\Altus01 - 5m\labelled\alt01002_labels.csv"
+LABELS_CSV = r"E:\Jammertest23\23.09.18 - Jammertest 2023 - Day 1\Altus06 - 150m\labelled\alt06001_labels.csv"
 
 # Output directory for plots, metrics, logs, etc.
-OUT_DIR    = r"E:\Jammertest23\23.09.18 - Jammertest 2023 - Day 1\plots\alt01002_eval_from_labels"
+OUT_DIR    = r"E:\Jammertest23\23.09.18 - Jammertest 2023 - Day 1\plots\alt06001_eval_from_labels"
 
 # ==> Point to YOUR XGB model trained on these 78 features:
-MODEL_PATH = r"..\artifacts\jammertest_sim\xgb_run_20251209_131721\xgb_20251209_131741\xgb_trainval.joblib"
+MODEL_PATH = r"..\artifacts\finetuned\finetune_continue_20251216_115211\xgb_20251216_115211\xgb_finetuned_continue.joblib"
 
 # Save options
 SAVE_IMAGES          = False   # Spectrogram+waveform per sample (10k → heavy); set True if you really want them
@@ -965,7 +965,7 @@ def normalize_model_labeler(model):
 
 
 # ====================== NOJAM VETO (OPTIONAL) ======================
-USE_NOJAM_VETO = True
+USE_NOJAM_VETO = False
 P_TOP_MIN       = 0.5   # if max class prob is below this, prediction is "uncertain"
 P_NOJAM_MIN     = 0.8   # if NoJam prob is at/above this and we're uncertain, call NoJam
 ENERGY_RMS_MAX  = 0.12  # if absolute power is very low and NoJam prob is non-trivial, call NoJam
