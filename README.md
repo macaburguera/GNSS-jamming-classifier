@@ -222,4 +222,4 @@ Refer to the individual scripts for usage details.
 ## License
 
 This repository is intended for research and educational use.  
-Refer to the LICENSE file (if present) or the repository metadata for licensing details.
+Refer to the LICENSE file or the repository metadata for licensing details.
