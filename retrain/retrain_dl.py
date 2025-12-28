@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-finetune_cnn_from_labels.py
+finetune_cnn_from_labels.py  (MULTI-CSV version)
 
 Fine-tune a *spectrogram deep learning* jammer classifier (CNN/SE-CNN/ViT)
-that was trained on synthetic .mat data, using REAL labelled NPZ samples from
-your labelling GUI (labels CSV pointing to .npz with iq + fs_hz).
+trained on synthetic .mat data, using REAL labelled NPZ samples from MULTIPLE
+*_labels.csv files produced by your labelling GUI.
 
-Key goals (mirrors your XGB finetune script idea):
+Key goals:
 - Keep the original 4-class output head: ["NoJam","Chirp","NB","WB"]
   even if REAL data has zero samples for some class (e.g. WB).
 - Adapt decision boundaries to REAL data with gentle updates (low LR).
@@ -19,7 +19,7 @@ Run:
 Edits:
   Only edit CONFIG below (no CLI args).
 
-Expected REAL labels CSV columns (same spirit as your XGB script):
+Expected REAL labels CSV columns:
   label, iq_path, block_idx, gps_week, tow_s, utc_iso, sbf_path
 (Extra columns ignored.)
 
@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import csv
 import json
-import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,11 +87,17 @@ from scipy.signal import stft as scipy_stft
 # =============================================================================
 
 CONFIG = dict(
-    # ---------------- REAL labelled dataset ----------------
-    LABELS_CSV=r"E:\Jammertest23\23.09.20 - Jammertest 2023 - Day 3\Roadside test\alt01004-labelled\alt01004_labels.csv",
+    # ---------------- REAL labelled datasets (MULTIPLE CSVs) ----------------
+    LABELS_CSVS=[
+        r"E:\Jammertest23\23.09.20 - Jammertest 2023 - Day 3\Roadside test\alt01004-labelled\alt01004_labels.csv",
+        r"E:\Jammertest23\23.09.19 - Jammertest 2023 - Day 2\alt06-meac-afternoon-labelled\alt06 - Meaconing afternoon_labels.csv",
+    ],
+
+    # If the same NPZ appears in both CSVs, keep only the first occurrence
+    DEDUPLICATE_BY_PATH=True,
 
     # ---------------- Model to finetune ----------------
-    # This should be the synthetic-trained bundle produced by train_eval_cnn_spectrogram.py (model.pt)
+    # Synthetic-trained bundle produced by train_eval_cnn_spectrogram.py (model.pt)
     MODEL_IN=r"..\artifacts\jammertest_sim_DL\spec_run_20251215_230651\model.pt",
 
     # Output
@@ -108,14 +113,13 @@ CONFIG = dict(
     NPZ_FS_KEY="fs_hz",
 
     # Splitting
-    SPLIT_MODE="random",# "time" or "random"
+    SPLIT_MODE="random",  # "time" or "random"
     TRAIN_FRAC=0.70,
     VAL_FRAC=0.15,
     SEED=42,
 
-    # If a class exists in the dataset but ends up missing in VAL/TEST due to splitting,
+    # If a class exists overall but ends up missing in VAL/TEST due to splitting,
     # attempt to move a few samples across splits to ensure coverage.
-    # (If the class truly has 0 samples overall, nothing to do.)
     ENSURE_MIN_PER_CLASS_IN_VAL_TEST=True,
     MIN_PER_CLASS_VAL=1,
     MIN_PER_CLASS_TEST=1,
@@ -129,7 +133,7 @@ CONFIG = dict(
     NUM_WORKERS=0,
     DEVICE=None,  # None -> auto cuda/cpu
 
-    # Optional: freeze early layers for first N epochs (helps not to destroy features)
+    # Optional: freeze early layers for first N epochs
     FREEZE_BACKBONE=True,
     FREEZE_EPOCHS=5,
 
@@ -168,6 +172,7 @@ CONFIG = dict(
     WRITE_TEST_PRED_LOG=True,
 )
 
+
 # =============================================================================
 # Small helpers
 # =============================================================================
@@ -201,7 +206,7 @@ def _get_lr(optim: torch.optim.Optimizer) -> float:
 
 
 # =============================================================================
-# Label CSV parsing
+# Label CSV parsing (MULTI-CSV + label normalization + optional dedup)
 # =============================================================================
 
 @dataclass
@@ -213,6 +218,7 @@ class SampleRow:
     tow_s: Optional[float]
     utc_iso: str
     sbf_path: str
+    source_csv: str
 
 def _resolve_path_maybe_relative(p: str, base_dir: Path) -> Path:
     pp = Path(p)
@@ -223,14 +229,44 @@ def _resolve_path_maybe_relative(p: str, base_dir: Path) -> Path:
         return p1
     return (base_dir / pp.name).resolve()
 
+def normalize_label(lbl: str, ignored: set) -> Optional[str]:
+    """
+    Canonicalizes labels to {"NoJam","Chirp","NB","WB"} where possible.
+    Returns None if empty/ignored.
+    """
+    if lbl is None:
+        return None
+    raw = str(lbl).strip()
+    if not raw:
+        return None
+
+    low = raw.lower().replace(" ", "").replace("_", "").replace("-", "")
+    ignored_low = {s.lower().replace(" ", "").replace("_", "").replace("-", "") for s in ignored}
+    if low in ignored_low:
+        return None
+
+    mapping = {
+        "nojam": "NoJam",
+        "nojamming": "NoJam",
+        "clean": "NoJam",
+        "chirp": "Chirp",
+        "sweep": "Chirp",
+        "nb": "NB",
+        "narrowband": "NB",
+        "wb": "WB",
+        "wideband": "WB",
+    }
+    return mapping.get(low, raw)
+
 def read_labels_csv(csv_path: Path, ignored: set) -> List[SampleRow]:
     base_dir = csv_path.parent
     rows: List[SampleRow] = []
+
     with open(csv_path, "r", newline="", encoding="utf-8") as fh:
         rdr = csv.DictReader(fh)
         for r in rdr:
-            label = (r.get("label") or "").strip()
-            if not label or label in ignored:
+            label = normalize_label(r.get("label"), ignored=ignored)
+            if not label:
                 continue
 
             iq_path_raw = (r.get("iq_path") or "").strip()
@@ -267,8 +303,33 @@ def read_labels_csv(csv_path: Path, ignored: set) -> List[SampleRow]:
                 tow_s=tow_s,
                 utc_iso=utc_iso,
                 sbf_path=sbf_path,
+                source_csv=str(csv_path),
             ))
     return rows
+
+def load_rows_from_csvs(csv_paths: List[Path], ignored: set, dedup: bool) -> List[SampleRow]:
+    all_rows: List[SampleRow] = []
+    for p in csv_paths:
+        rs = read_labels_csv(p, ignored=ignored)
+        print(f"[load] {p.name}: rows={len(rs)}")
+        all_rows.extend(rs)
+
+    if dedup:
+        seen = set()
+        uniq: List[SampleRow] = []
+        dup = 0
+        for r in all_rows:
+            key = str(r.iq_path.resolve()) if r.iq_path.exists() else str(r.iq_path)
+            if key in seen:
+                dup += 1
+                continue
+            seen.add(key)
+            uniq.append(r)
+        if dup:
+            print(f"[load] deduplicated by iq_path: removed {dup} duplicates")
+        all_rows = uniq
+
+    return all_rows
 
 
 # =============================================================================
@@ -470,7 +531,6 @@ def make_splits(
     order = np.lexsort((block_idx, tow_s, gps_week)).astype(np.int64)
     return order[:ntr], order[ntr:ntr + nva], order[ntr + nva:]
 
-
 def ensure_min_per_class(
     idx_tr: np.ndarray,
     idx_va: np.ndarray,
@@ -481,10 +541,6 @@ def ensure_min_per_class(
     min_test: int,
     seed: int,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    If a class exists overall but is missing in VAL/TEST, move some samples from TRAIN into that split.
-    Keeps sizes roughly stable (we just append to val/test; you can re-tune TRAIN_FRAC if you care).
-    """
     rng = np.random.default_rng(seed)
     y = np.asarray(y).reshape(-1)
 
@@ -495,9 +551,8 @@ def ensure_min_per_class(
     overall = [int(np.sum(y == c)) for c in range(K)]
     for c in range(K):
         if overall[c] == 0:
-            continue  # truly absent
+            continue
 
-        # VAL
         have_val = int(np.sum(y[np.array(idx_va, dtype=np.int64)] == c)) if idx_va else 0
         need = max(0, int(min_val) - have_val)
         if need > 0:
@@ -508,7 +563,6 @@ def ensure_min_per_class(
                     idx_tr.remove(t)
                     idx_va.append(int(t))
 
-        # TEST
         have_test = int(np.sum(y[np.array(idx_te, dtype=np.int64)] == c)) if idx_te else 0
         need = max(0, int(min_test) - have_test)
         if need > 0:
@@ -616,11 +670,7 @@ class RealNPZSpecDataset(Dataset):
         )
         return S.astype(np.float32, copy=False), int(self.y[idx])
 
-
 class SynthMatSpecDataset(Dataset):
-    """
-    Optional rehearsal dataset from synthetic .mat files (same preprocessing).
-    """
     def __init__(
         self,
         files: List[Path],
@@ -688,7 +738,6 @@ class SynthMatSpecDataset(Dataset):
             do_fftshift=self.fftshift,
         )
         return S.astype(np.float32, copy=False), int(self.labels[idx])
-
 
 def _collate(batch):
     xs = torch.tensor(np.stack([b[0] for b in batch], axis=0))  # (B,C,F,T)
@@ -946,9 +995,15 @@ def main():
     C = CONFIG
     verbose = bool(C.get("VERBOSE", True))
 
-    labels_csv = Path(C["LABELS_CSV"]).expanduser().resolve()
-    if not labels_csv.exists():
-        raise FileNotFoundError(f"LABELS_CSV not found: {labels_csv}")
+    # --- MULTI-CSV resolve ---
+    csv_list = C.get("LABELS_CSVS", None)
+    if not csv_list or not isinstance(csv_list, (list, tuple)):
+        raise RuntimeError("CONFIG['LABELS_CSVS'] must be a non-empty list of *_labels.csv paths.")
+
+    labels_csv_paths = [Path(p).expanduser().resolve() for p in csv_list]
+    for p in labels_csv_paths:
+        if not p.exists():
+            raise FileNotFoundError(f"LABELS_CSV not found: {p}")
 
     model_in = Path(C["MODEL_IN"]).expanduser().resolve()
     if not model_in.exists():
@@ -1020,7 +1075,6 @@ def main():
     if state is None and isinstance(ckpt, dict) and "state_dict" in ckpt:
         state = ckpt["state_dict"]
     if state is None:
-        # maybe the checkpoint IS a raw state_dict
         if isinstance(ckpt, dict) and all(isinstance(v, torch.Tensor) for v in ckpt.values()):
             state = ckpt
         else:
@@ -1034,10 +1088,15 @@ def main():
 
     model = model.to(device)
 
-    # ---------------- Load REAL labelled rows ----------------
-    rows_all = read_labels_csv(labels_csv, ignored=set(C["IGNORED_LABELS"]))
+    # ---------------- Load REAL labelled rows (MULTI-CSV union) ----------------
+    ignored = set(C["IGNORED_LABELS"])
+    rows_all = load_rows_from_csvs(
+        labels_csv_paths,
+        ignored=ignored,
+        dedup=bool(C.get("DEDUPLICATE_BY_PATH", True))
+    )
     if not rows_all:
-        raise RuntimeError("No usable rows found in LABELS_CSV.")
+        raise RuntimeError("No usable rows found across LABELS_CSVS.")
 
     # Map labels to indices
     name_to_idx = {n: i for i, n in enumerate(classes)}
@@ -1066,7 +1125,11 @@ def main():
 
     y_all = np.asarray(y_all, int).reshape(-1)
 
-    _print(f"[REAL] total_rows={len(rows_all)} used={len(rows_used)} skipped_label={skipped_label} skipped_missing={skipped_missing} skipped_bad={skipped_bad}", verbose)
+    _print(
+        f"[REAL] total_rows={len(rows_all)} used={len(rows_used)} "
+        f"skipped_label={skipped_label} skipped_missing={skipped_missing} skipped_bad={skipped_bad}",
+        verbose
+    )
 
     # Split
     idx_tr, idx_va, idx_te = make_splits(
@@ -1103,7 +1166,7 @@ def main():
     # ---------------- Optional rehearsal from synthetic mats ----------------
     rehearsal_enabled = bool(str(C.get("REHEARSAL_SYNTH_BASE", "")).strip())
     ds_reh_tr = None
-    ds_reh_va = None
+    reh_labels_all: List[int] = []
 
     if rehearsal_enabled:
         synth_base = Path(C["REHEARSAL_SYNTH_BASE"]).expanduser().resolve()
@@ -1114,17 +1177,16 @@ def main():
         only_set = set(only) if only else None
 
         reh_files_all: List[Path] = []
-        reh_labels_all: List[int] = []
+        reh_labels_all = []
 
         for split in C.get("REHEARSAL_SPLITS", ("TRAIN",)):
             files_s, labels_s = list_split_files_mat(synth_base, str(split), classes, cap_per_class=None)
-            # filter classes
+
             if only_set is not None:
                 keep = [i for i, yy in enumerate(labels_s.tolist()) if classes[int(yy)] in only_set]
                 files_s = [files_s[i] for i in keep]
                 labels_s = labels_s[keep]
 
-            # cap per class
             maxpc = int(C.get("REHEARSAL_MAX_PER_CLASS", 0) or 0)
             if maxpc > 0:
                 rng = np.random.default_rng(int(C["SEED"]))
@@ -1215,14 +1277,12 @@ def main():
     # Mix rehearsal into train (and optionally val)
     if rehearsal_enabled and ds_reh_tr is not None:
         ds_tr = ConcatDataset([ds_tr_real, ds_reh_tr])
-        # Build labels for sampler over concat dataset
         y_sampler = np.concatenate([y_tr, np.asarray(reh_labels_all, int)])
     else:
         ds_tr = ds_tr_real
         y_sampler = y_tr
 
     if rehearsal_enabled and bool(C.get("REHEARSAL_ENABLE_VAL", False)) and ds_reh_tr is not None:
-        # not recommended, but supported: reuse ds_reh_tr as "val rehearsal"
         ds_va = ConcatDataset([ds_va_real, ds_reh_tr])
     else:
         ds_va = ds_va_real
@@ -1264,8 +1324,6 @@ def main():
     )
 
     # ---------------- Loss / optimizer / scheduler ----------------
-    # Class weights based on REAL train only (not rehearsal) to focus adaptation;
-    # if you prefer combined, replace y_tr with y_sampler.
     ccounts_real = np.bincount(np.asarray(y_tr, int), minlength=K).astype(np.float64)
     ccounts_real[ccounts_real == 0] = 1.0
     cweights = (ccounts_real.sum() / ccounts_real)
@@ -1280,14 +1338,12 @@ def main():
 
     # ---------------- Optional freezing ----------------
     def _set_backbone_trainable(trainable: bool):
-        # CNN: freeze everything except head; ViT: freeze everything except head
-        for n, p in model.named_parameters():
+        for _, p in model.named_parameters():
             p.requires_grad = True
 
         if trainable:
             return
 
-        # freeze backbone heuristics
         if isinstance(model, SpecCNN2D):
             for n, p in model.named_parameters():
                 if not n.startswith("head."):
@@ -1451,7 +1507,6 @@ def main():
     rows_test = [{"name": k, **v} for k, v in rep_test.items() if isinstance(v, dict)]
     save_csv_dict(run_root / "test_report.csv", rows_test, ["name", "precision", "recall", "f1-score", "support"])
 
-    # Summary
     val_macro_f1 = float(f1_score(yv_true, yv_pred, average="macro", labels=list(range(K)), zero_division=0))
     test_macro_f1 = float(f1_score(yt_true, yt_pred, average="macro", labels=list(range(K)), zero_division=0))
 
@@ -1465,8 +1520,6 @@ def main():
     if bool(C.get("WRITE_TEST_PRED_LOG", True)):
         idx_to_name = {i: classes[i] for i in range(K)}
         rows_log = []
-        # NOTE: dl_te_real order corresponds to rows_te_real (no shuffling).
-        # But evaluate() is batched; we output in dataset order for simplicity:
         for i in range(len(rows_te)):
             rows_log.append({
                 "iq_path": str(rows_te[i].iq_path),
@@ -1477,18 +1530,19 @@ def main():
                 "block_idx": int(rows_te[i].block_idx),
                 "utc_iso": str(rows_te[i].utc_iso),
                 "sbf_path": str(rows_te[i].sbf_path),
+                "source_csv": str(rows_te[i].source_csv),
             })
         save_csv_dict(
             run_root / "pred_log_test.csv",
             rows_log,
-            ["iq_path", "label_true", "label_pred", "gps_week", "tow_s", "block_idx", "utc_iso", "sbf_path"]
+            ["iq_path", "label_true", "label_pred", "gps_week", "tow_s", "block_idx", "utc_iso", "sbf_path", "source_csv"]
         )
 
     # Run meta
     meta = dict(
         started_at=_now(),
         run_dir=str(run_root),
-        labels_csv=str(labels_csv),
+        labels_csvs=[str(p) for p in labels_csv_paths],
         model_in=str(model_in),
         model_kind=model_kind,
         classes=classes,
@@ -1506,7 +1560,7 @@ def main():
         rehearsal=dict(
             enabled=bool(rehearsal_enabled),
             synth_base=str(C.get("REHEARSAL_SYNTH_BASE", "")),
-            only_classes=list(C.get("REHEARSAL_ONLY_CLASSES", ()) or ()),
+            only_classes=list(C.get("REHEARSAL_ONLY_CLASSES", ()) or ()) if C.get("REHEARSAL_ONLY_CLASSES", None) else None,
             max_per_class=int(C.get("REHEARSAL_MAX_PER_CLASS", 0) or 0),
             splits=list(C.get("REHEARSAL_SPLITS", ()) or ()),
         ),

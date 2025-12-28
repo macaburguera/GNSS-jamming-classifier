@@ -26,6 +26,7 @@ from pathlib import Path
 import sys, json, csv
 from typing import List, Tuple, Optional, Dict
 import numpy as np
+import time
 
 import matplotlib
 matplotlib.use("Agg")  # headless-safe
@@ -46,7 +47,7 @@ from collections import Counter
 LABELS_CSV = r"E:\Jammertest23\23.09.19 - Jammertest 2023 - Day 2\alt02-ref-labelled\alt02 - reference during kraken test at location 2 for smartphone comparison_labels.csv"
 
 # Output directory for plots, metrics, logs, etc.
-OUT_DIR    = r"E:\Jammertest23\23.09.19 - Jammertest 2023 - Day 2\plots\alt02-ref-labelled"
+OUT_DIR    = r"E:\Jammertest23\23.09.19 - Jammertest 2023 - Day 2\plots\alt02-ref-labelled-timed"
 
 # ==> Point to YOUR XGB model trained on these 78 features:
 MODEL_PATH = r"..\artifacts\finetuned\finetune_continue_20251216_160409\xgb_20251216_160409\xgb_finetuned_continue.joblib"
@@ -1039,6 +1040,13 @@ def main():
     y_pred: List[str] = []
     rows_log: List[dict] = []
 
+    # Timing accumulators (seconds)
+    t_npz = []
+    t_feat = []
+    t_infer = []
+    t_plot = []
+    t_total = []
+
     n_total = 0
     n_skipped_missing_npz = 0
     n_skipped_bad_label = 0
@@ -1046,6 +1054,7 @@ def main():
     with open(labels_csv_path, "r", newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
         for row in reader:
+            t_loop_start = time.perf_counter()
             n_total += 1
             sample_id = row.get("sample_id", "")
             label_raw = row.get("label", "")
@@ -1077,7 +1086,9 @@ def main():
                     print(f"[WARN] NPZ not found for sample_id={sample_id}: {iq_path_raw}")
                     continue
 
+            t0 = time.perf_counter()
             data = np.load(iq_path)
+            t_npz.append(time.perf_counter() - t0)
             iq = data["iq"]
             fs = float(data["fs_hz"])
 
@@ -1122,8 +1133,12 @@ def main():
                     utc_dt = None
 
             # Feature extraction + prediction
+            t0 = time.perf_counter()
             feats = extract_features(iq, fs)
+            t_feat.append(time.perf_counter() - t0)
+            t0 = time.perf_counter()
             pred_label, pred_proba = predict_fn(feats)
+            t_infer.append(time.perf_counter() - t0)
             pred_label = canon(pred_label)
 
             # Optional NoJam veto
@@ -1146,6 +1161,7 @@ def main():
 
             # Save plot if requested
             if SAVE_IMAGES:
+                t0 = time.perf_counter()
                 _ = plot_and_save(
                     sample_id=sample_id,
                     block_idx=block_idx,
@@ -1161,6 +1177,7 @@ def main():
                     pred_proba=pred_proba if isinstance(pred_proba, dict) else None,
                     out_dir=out_dir,
                 )
+                t_plot.append(time.perf_counter() - t0)
 
             # Per-sample log row
             log_row = {
@@ -1197,6 +1214,7 @@ def main():
                     }
                 )
 
+            t_total.append(time.perf_counter() - t_loop_start)
             rows_log.append(log_row)
 
     # ---- metrics (strict on known GT)
@@ -1312,6 +1330,39 @@ def main():
                 w.writerow(r)
         print(f"Wrote per-sample log to: {csv_out}")
 
+
+    # ====================== TIMING SUMMARY ======================
+    def timing_stats(arr):
+        if not arr:
+            return {}
+        a = np.array(arr, float)
+        return {
+            "count": int(a.size),
+            "mean_ms": float(a.mean() * 1e3),
+            "median_ms": float(np.median(a) * 1e3),
+            "std_ms": float(a.std() * 1e3),
+            "min_ms": float(a.min() * 1e3),
+            "max_ms": float(a.max() * 1e3),
+            "p90_ms": float(np.percentile(a, 90) * 1e3),
+            "p95_ms": float(np.percentile(a, 95) * 1e3),
+            "p99_ms": float(np.percentile(a, 99) * 1e3),
+        }
+
+    timing_summary = {
+        "npz_load": timing_stats(t_npz),
+        "feature_extraction": timing_stats(t_feat),
+        "inference": timing_stats(t_infer),
+        "plotting": timing_stats(t_plot),
+        "total": timing_stats(t_total),
+    }
+
+    print("\n=== COMPUTATIONAL PERFORMANCE SUMMARY ===")
+    for k, v in timing_summary.items():
+        if v:
+            print(f"\n[{k}]")
+            for kk, vv in v.items():
+                print(f"  {kk}: {vv:.3f}")
+
     if SUMMARY_JSON:
         js = {
             "labels_csv_path": str(labels_csv_path),
@@ -1325,7 +1376,8 @@ def main():
             "feature_names": FEATURE_NAMES,
             "save_images": SAVE_IMAGES,
             "save_per_sample_csv": SAVE_PER_SAMPLE_CSV,
-            "veto": {
+            "timing_summary": timing_summary,
+        "veto": {
                 "enabled": USE_NOJAM_VETO,
                 "P_TOP_MIN": P_TOP_MIN,
                 "P_NOJAM_MIN": P_NOJAM_MIN,

@@ -2,8 +2,14 @@
 # retrain_xgb.py
 
 """
-Fine-tune an existing 4-class synthetic XGBoost model on REAL labelled NPZ data,
-EVEN IF the real data has ZERO samples of some class (e.g. WB).
+Fine-tune an existing 4-class synthetic XGBoost model on REAL labelled NPZ data
+loaded from TWO (or more) *_labels.csv files produced by your GUI.
+
+Use case (your case):
+- Folder A: NoJam, Chirp, NB
+- Folder B: NoJam, NB, WB
+=> Train on the union while KEEPING the original 4 output classes:
+   ["NoJam", "Chirp", "NB", "WB"]
 
 Goal:
 - Keep WB capability learned from synthetic model.
@@ -18,11 +24,17 @@ NO CLI: edit CONFIG and run:
 
 Outputs:
   <OUT_ROOT>/<RUN_NAME>/
-    xgb_finetuned_continue.joblib
-    metrics.json, summary.txt
-    val/test confusion matrices + reports
-    pred_log_test.csv
-    features/train_features.npz, val_features.npz, test_features.npz  (with metadata)
+    xgb_<timestamp>/
+      xgb_finetuned_continue.joblib
+      metrics.json, summary.txt
+      val/test confusion matrices + reports
+      pred_log_test.csv
+    features/
+      train_features.npz, val_features.npz, test_features.npz  (with metadata)
+
+Notes:
+- Caching: if REUSE_SPLIT_FEATURES_IF_EXISTS=True, the script will reuse cached
+  split features only if they were created from the SAME set of LABELS_CSVS.
 """
 
 from __future__ import annotations
@@ -44,7 +56,6 @@ from joblib import load as joblib_load
 from joblib import dump as joblib_dump
 
 from sklearn.pipeline import Pipeline
-from sklearn.model_selection import PredefinedSplit
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
@@ -61,8 +72,11 @@ from feature_extractor import extract_features, FEATURE_NAMES
 # CONFIG (EDIT THESE)
 # =============================================================================
 
-# Real labelled dataset CSV from your GUI
-LABELS_CSV = r"E:\Jammertest23\23.09.20 - Jammertest 2023 - Day 3\Roadside test\alt01004-labelled\alt01004_labels.csv"
+# REAL labelled dataset CSVs from your GUI (two folders => two CSVs)
+LABELS_CSVS = [
+    r"E:\Jammertest23\23.09.20 - Jammertest 2023 - Day 3\Roadside test\alt01004-labelled\alt01004_labels.csv",
+    r"E:\Jammertest23\23.09.19 - Jammertest 2023 - Day 2\alt06-meac-afternoon-labelled\alt06 - Meaconing afternoon_labels.csv",
+]
 
 # Old synthetic-trained model (Pipeline or XGBClassifier)
 MODEL_IN = r"..\artifacts\jammertest_sim\xgb_run_20251215_222542\xgb_20251215_222636\xgb_trainval.joblib"
@@ -71,24 +85,27 @@ MODEL_IN = r"..\artifacts\jammertest_sim\xgb_run_20251215_222542\xgb_20251215_22
 OUT_ROOT = r"../artifacts/finetuned"
 
 # Run name (auto if empty)
-RUN_NAME = ""  # e.g. "finetune_day3_continue"
+RUN_NAME = ""  # e.g. "finetune_day3_two_folders"
 
 # IMPORTANT: keep the original 4 classes so WB output remains possible
 CLASSES_TO_USE = ["NoJam", "Chirp", "NB", "WB"]
 
-# Any other labels are ignored (e.g. "Interference")
+# Any other labels are ignored (case-insensitive)
 IGNORED_LABELS = {"Interference"}
 
+# If the same NPZ appears in both CSVs, keep only the first occurrence
+DEDUPLICATE_BY_PATH = True
+
 # Splitting
-SPLIT_MODE = "time"   # "time" or "random"
+SPLIT_MODE = "random" # time" or "random"
 TRAIN_FRAC = 0.70
 VAL_FRAC = 0.15
 SEED = 42
 
 # Fine-tuning strategy
-CONTINUE_BOOSTING = True     # <-- this is the whole point for keeping WB
-EXTRA_ROUNDS = 250           # number of new trees to add
-FINETUNE_LEARNING_RATE = 0.05  # smaller = gentler updates (None to keep old)
+CONTINUE_BOOSTING = True        # <-- keep WB capability
+EXTRA_ROUNDS = 250              # number of new trees to add per stage
+FINETUNE_LEARNING_RATE = 0.05   # smaller = gentler updates (None to keep old)
 
 BALANCE_CLASSES = True
 FINAL_REFIT_ON_TRAINVAL = True  # after val eval, continue-boost on train+val
@@ -103,7 +120,7 @@ SYNTH_FEATURES_DIR = ""  # "" disables rehearsal
 
 # If rehearsal enabled, how many synthetic samples to mix in per class (0 = all)
 SYNTH_MAX_PER_CLASS = 1000
-# Which synthetic classes to include (None = all). For WB retention, you can set ["WB"].
+# Which synthetic classes to include (None = all). For WB retention, set ["WB"].
 SYNTH_ONLY_CLASSES = ["WB"]
 
 # Per-sample test log
@@ -123,6 +140,7 @@ class SampleRow:
     tow_s: Optional[float]
     utc_iso: str
     sbf_path: str
+    source_csv: str  # for debugging
 
 
 # =============================================================================
@@ -143,14 +161,47 @@ def _resolve_path_maybe_relative(p: str, base_dir: Path) -> Path:
     return (base_dir / pp.name).resolve()
 
 
+def normalize_label(lbl: str) -> Optional[str]:
+    """
+    Make label parsing robust across casing and minor variants.
+    Returns canonical class name or None if empty/ignored.
+    """
+    if lbl is None:
+        return None
+    raw = str(lbl).strip()
+    if not raw:
+        return None
+
+    low = raw.lower().replace(" ", "").replace("_", "").replace("-", "")
+    ignored_low = {s.lower().replace(" ", "").replace("_", "").replace("-", "") for s in IGNORED_LABELS}
+    if low in ignored_low:
+        return None
+
+    # canonical mapping
+    mapping = {
+        "nojam": "NoJam",
+        "nojamming": "NoJam",
+        "clean": "NoJam",
+        "chirp": "Chirp",
+        "sweep": "Chirp",   # if your GUI used "Sweep" sometimes
+        "nb": "NB",
+        "narrowband": "NB",
+        "wb": "WB",
+        "wideband": "WB",
+    }
+    return mapping.get(low, raw)  # fall back to raw if unknown
+
+
 def read_labels_csv(csv_path: Path) -> List[SampleRow]:
     base_dir = csv_path.parent
     rows: List[SampleRow] = []
+
     with open(csv_path, "r", newline="", encoding="utf-8") as fh:
         rdr = csv.DictReader(fh)
         for r in rdr:
-            label = (r.get("label") or "").strip()
-            if not label or label in IGNORED_LABELS:
+            label_raw = r.get("label")
+            label = normalize_label(label_raw)
+            if not label:
                 continue
 
             iq_path_raw = (r.get("iq_path") or "").strip()
@@ -187,9 +238,35 @@ def read_labels_csv(csv_path: Path) -> List[SampleRow]:
                 gps_week=gps_week,
                 tow_s=tow_s,
                 utc_iso=utc_iso,
-                sbf_path=sbf_path
+                sbf_path=sbf_path,
+                source_csv=str(csv_path),
             ))
     return rows
+
+
+def load_rows_from_csvs(csv_paths: List[Path]) -> List[SampleRow]:
+    all_rows: List[SampleRow] = []
+    for p in csv_paths:
+        rs = read_labels_csv(p)
+        print(f"[load] {p.name}: rows={len(rs)}")
+        all_rows.extend(rs)
+
+    if DEDUPLICATE_BY_PATH:
+        seen = set()
+        uniq: List[SampleRow] = []
+        dup = 0
+        for r in all_rows:
+            key = str(r.iq_path.resolve()) if r.iq_path.exists() else str(r.iq_path)
+            if key in seen:
+                dup += 1
+                continue
+            seen.add(key)
+            uniq.append(r)
+        if dup:
+            print(f"[load] deduplicated by iq_path: removed {dup} duplicates")
+        all_rows = uniq
+
+    return all_rows
 
 
 def safe_npz_load(path: Path) -> Optional[Dict[str, np.ndarray]]:
@@ -256,7 +333,7 @@ def build_features_from_rows(
             print(f"[features] extracted {kept} samples...")
 
     if not X_list:
-        raise RuntimeError("No valid samples loaded. Check LABELS_CSV and NPZ paths.")
+        raise RuntimeError("No valid samples loaded. Check LABELS_CSVS and NPZ paths.")
 
     X = np.vstack(X_list)
     y = np.asarray(y_list, dtype=int).reshape(-1)
@@ -334,7 +411,8 @@ def plot_confusion_matrix(cm: np.ndarray, classes, normalize: bool, title: str, 
     plt.figure(figsize=(7, 6))
     im = plt.imshow(M, interpolation="nearest", cmap="viridis")
     plt.title(title)
-    plt.xlabel("Predicted"); plt.ylabel("True")
+    plt.xlabel("Predicted")
+    plt.ylabel("True")
     plt.xticks(np.arange(len(classes)), classes, rotation=45, ha="right")
     plt.yticks(np.arange(len(classes)), classes)
     for i in range(M.shape[0]):
@@ -356,6 +434,7 @@ def save_split_npz(
     feat_names: List[str],
     meta_rows: List[SampleRow],
     paths: List[Path],
+    labels_csvs: List[str],
 ):
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
@@ -370,7 +449,20 @@ def save_split_npz(
         block_idx=np.array([r.block_idx for r in meta_rows], dtype=np.int64),
         utc_iso=np.array([r.utc_iso for r in meta_rows], dtype=object),
         sbf_path=np.array([r.sbf_path for r in meta_rows], dtype=object),
+        source_csv=np.array([r.source_csv for r in meta_rows], dtype=object),
+        labels_sources=np.array(labels_csvs, dtype=object),
     )
+
+
+def cached_features_match_sources(npz_path: Path, labels_csvs: List[str]) -> bool:
+    try:
+        d = np.load(npz_path, allow_pickle=True)
+        if "labels_sources" not in d.files:
+            return False
+        cached = [str(x) for x in d["labels_sources"].tolist()]
+        return cached == labels_csvs
+    except Exception:
+        return False
 
 
 def eval_and_save_split(split_name: str, y_true: np.ndarray, y_pred: np.ndarray, classes: List[str], out_dir: Path) -> Dict[str, float]:
@@ -384,7 +476,7 @@ def eval_and_save_split(split_name: str, y_true: np.ndarray, y_pred: np.ndarray,
 
     rep = classification_report(
         y_true, y_pred,
-        labels=labels,          # critical: keep 4-class report even if a class is missing
+        labels=labels,                 # keep 4-class report even if class is missing
         target_names=classes,
         digits=6,
         output_dict=True,
@@ -405,8 +497,7 @@ def load_synth_rehearsal(features_dir: Path, classes_target: List[str], feat_nam
     """
     Loads synthetic cached features and returns (Xr, yr) remapped to classes_target indices.
 
-    Expected files: train_features.npz and/or val_features.npz
-    (we'll try both if present).
+    Expected files: train_features.npz and/or val_features.npz (we'll try both if present).
 
     If SYNTH_ONLY_CLASSES is set, only those classes are returned.
     """
@@ -473,9 +564,13 @@ def load_synth_rehearsal(features_dir: Path, classes_target: List[str], feat_nam
 # =============================================================================
 
 def main():
-    labels_csv = Path(LABELS_CSV).expanduser().resolve()
-    if not labels_csv.exists():
-        raise FileNotFoundError(f"LABELS_CSV not found: {labels_csv}")
+    # --- resolve CSV list ---
+    labels_csv_paths = [Path(p).expanduser().resolve() for p in LABELS_CSVS]
+    for p in labels_csv_paths:
+        if not p.exists():
+            raise FileNotFoundError(f"LABELS_CSV not found: {p}")
+
+    labels_csvs_str = [str(p) for p in labels_csv_paths]
 
     model_in = Path(MODEL_IN).expanduser().resolve()
     if not model_in.exists():
@@ -499,7 +594,15 @@ def main():
     test_npz  = feats_dir / "test_features.npz"
 
     # --- load/build real features ---
-    if REUSE_SPLIT_FEATURES_IF_EXISTS and train_npz.exists() and val_npz.exists() and test_npz.exists():
+    can_reuse = (
+        REUSE_SPLIT_FEATURES_IF_EXISTS
+        and train_npz.exists() and val_npz.exists() and test_npz.exists()
+        and cached_features_match_sources(train_npz, labels_csvs_str)
+        and cached_features_match_sources(val_npz, labels_csvs_str)
+        and cached_features_match_sources(test_npz, labels_csvs_str)
+    )
+
+    if can_reuse:
         print(f"[features] loading cached split features from: {feats_dir}")
         dtr = np.load(train_npz, allow_pickle=True)
         dva = np.load(val_npz, allow_pickle=True)
@@ -518,12 +621,13 @@ def main():
         blk_te = dte.get("block_idx", None)
         utc_te = dte.get("utc_iso", None)
         sbf_te = dte.get("sbf_path", None)
+        src_te = dte.get("source_csv", None)
 
     else:
-        print("[load] reading labels CSV...")
-        rows = read_labels_csv(labels_csv)
+        print("[load] reading labels CSVs...")
+        rows = load_rows_from_csvs(labels_csv_paths)
         if not rows:
-            raise RuntimeError("No rows found in labels CSV.")
+            raise RuntimeError("No rows found in labels CSVs.")
 
         print("[features] extracting features from NPZ...")
         X, y, used_rows, used_paths, classes = build_features_from_rows(rows, CLASSES_TO_USE)
@@ -543,9 +647,9 @@ def main():
         paths_va = [used_paths[int(i)] for i in idx_va]
         paths_te = [used_paths[int(i)] for i in idx_te]
 
-        save_split_npz(train_npz, Xtr, ytr, classes, feat_names, rows_tr, paths_tr)
-        save_split_npz(val_npz,   Xva, yva, classes, feat_names, rows_va, paths_va)
-        save_split_npz(test_npz,  Xte, yte, classes, feat_names, rows_te, paths_te)
+        save_split_npz(train_npz, Xtr, ytr, classes, feat_names, rows_tr, paths_tr, labels_csvs_str)
+        save_split_npz(val_npz,   Xva, yva, classes, feat_names, rows_va, paths_va, labels_csvs_str)
+        save_split_npz(test_npz,  Xte, yte, classes, feat_names, rows_te, paths_te, labels_csvs_str)
 
         paths_te = np.array([str(p) for p in paths_te], dtype=object)
         gpsw_te = np.array([r.gps_week if r.gps_week is not None else -1 for r in rows_te], dtype=np.int64)
@@ -553,6 +657,7 @@ def main():
         blk_te  = np.array([r.block_idx for r in rows_te], dtype=np.int64)
         utc_te  = np.array([r.utc_iso for r in rows_te], dtype=object)
         sbf_te  = np.array([r.sbf_path for r in rows_te], dtype=object)
+        src_te  = np.array([r.source_csv for r in rows_te], dtype=object)
 
     K = len(classes)
     print(f"Train {Xtr.shape}  Val {Xva.shape}  Test {Xte.shape}")
@@ -569,7 +674,6 @@ def main():
 
     # --- weights ---
     wtr = compute_sample_weights(ytr, K) if BALANCE_CLASSES else None
-    wva = compute_sample_weights(yva, K) if BALANCE_CLASSES else None
 
     # --- load old model ---
     print(f"[model] loading: {model_in}")
@@ -618,7 +722,6 @@ def main():
         pipe.fit(X_fit, y_fit, **fit_kwargs)
 
     else:
-        # (Not recommended for your WB-retention goal)
         fit_kwargs = {}
         if wtr is not None:
             fit_kwargs["clf__sample_weight"] = wtr
@@ -662,7 +765,7 @@ def main():
     joblib_dump(pipe, model_out)
 
     summary = {
-        "labels_csv": str(labels_csv),
+        "labels_csvs": labels_csvs_str,
         "model_in": str(model_in),
         "model_out": str(model_out),
         "classes": classes,
@@ -707,11 +810,12 @@ def main():
                 "block_idx": int(blk_te[i]) if blk_te is not None else "",
                 "utc_iso": str(utc_te[i]) if utc_te is not None else "",
                 "sbf_path": str(sbf_te[i]) if sbf_te is not None else "",
+                "source_csv": str(src_te[i]) if src_te is not None else "",
             })
         save_csv_dict(
             out_dir / "pred_log_test.csv",
             rows_log,
-            ["iq_path", "label_true", "label_pred", "gps_week", "tow_s", "block_idx", "utc_iso", "sbf_path"]
+            ["iq_path", "label_true", "label_pred", "gps_week", "tow_s", "block_idx", "utc_iso", "sbf_path", "source_csv"]
         )
 
     print("\nDONE")

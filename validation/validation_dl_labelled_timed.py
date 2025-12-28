@@ -45,13 +45,50 @@ except Exception as e:
     HAVE_TORCH = False
     TORCH_ERR = str(e)
 
+
+# ====================== TIMING UTILITIES (PER-SAMPLE COMPARABLE) ======================
+import time
+from collections import defaultdict
+
+_timing = defaultdict(list)
+
+def _tstart():
+    return time.perf_counter()
+
+def _tstop_batch(key, t0, batch_size):
+    dt = (time.perf_counter() - t0) * 1000.0  # ms total batch
+    if batch_size <= 0:
+        return
+    per_sample = dt / batch_size
+    for _ in range(batch_size):
+        _timing[key].append(per_sample)
+
+def _tstop_single(key, t0):
+    _timing[key].append((time.perf_counter() - t0) * 1000.0)
+
+def _stats(arr):
+    a = np.asarray(arr, float)
+    if a.size == 0:
+        return {}
+    return {
+        "count": int(a.size),
+        "mean_ms": float(np.mean(a)),
+        "median_ms": float(np.median(a)),
+        "std_ms": float(np.std(a)),
+        "min_ms": float(np.min(a)),
+        "max_ms": float(np.max(a)),
+        "p90_ms": float(np.percentile(a, 90)),
+        "p95_ms": float(np.percentile(a, 95)),
+        "p99_ms": float(np.percentile(a, 99)),
+    }
+
 # ============================ USER VARIABLES ============================
 
 # Path to the labels CSV produced by label_gui.py
 LABELS_CSV = r"E:\Jammertest23\23.09.19 - Jammertest 2023 - Day 2\alt02-ref-labelled\alt02 - reference during kraken test at location 2 for smartphone comparison_labels.csv"
 
 # Output directory for plots, metrics, logs, etc.
-OUT_DIR    = r"E:\Jammertest23\23.09.19 - Jammertest 2023 - Day 2\plots\alt02-ref-labelled"
+OUT_DIR    = r"E:\Jammertest23\23.09.19 - Jammertest 2023 - Day 2\plots\alt02-ref-labelled-timed-dl"
 
 # Your trained DL checkpoint:
 # - Original training:  ...\run_xxx\model.pt
@@ -559,7 +596,7 @@ def main():
         if not batch_specs:
             return
         S = np.stack(batch_specs, axis=0)  # (B,C,F,T)
-        pred_idx, probs = _predict_batch(S)
+        t0=_tstart(); pred_idx, probs = _predict_batch(S); _tstop_batch('inference', t0, S.shape[0])
 
         for bi, meta in enumerate(batch_meta):
             gt_label = meta["gt_label"]
@@ -614,8 +651,9 @@ def main():
         batch_meta.clear()
 
     for it in items:
+        t_tot = _tstart()
         try:
-            iq_raw, fs = _read_npz_iq_fs(it["iq_path"])
+            t0=_tstart(); iq_raw, fs = _read_npz_iq_fs(it["iq_path"]); _tstop_single('npz_load', t0)
         except Exception as e:
             n_skipped_bad_npz += 1
             if DEBUG_PRINT_SAMPLES:
@@ -627,7 +665,7 @@ def main():
         # Build spectrogram exactly like training
         iq = center_crop_or_pad(iq_raw, target_len=target_len)
         iq = normalize_iq(iq)
-        S = make_spectrogram(
+        t0=_tstart(); S = make_spectrogram(
             z=iq,
             fs=fs,
             nfft=nfft,
@@ -637,11 +675,12 @@ def main():
             spec_norm=spec_norm,
             eps=eps,
             do_fftshift=fftshift
-        )  # (C,F,T)
+        ); _tstop_single('spectrogram', t0)  # (C,F,T)
 
         batch_specs.append(S.astype(np.float32, copy=False))
         batch_meta.append({**it, "fs": fs, "pre_rms": pre_rms})
 
+        _tstop_single('total', t_tot)
         if len(batch_specs) >= int(BATCH_SIZE):
             _flush_batch()
 
@@ -738,6 +777,25 @@ def main():
         with open(out_dir / "summary.json", "w", encoding="utf-8") as fh:
             json.dump(js, fh, indent=2)
         print("Wrote summary.json")
+
+    
+    # ====================== TIMING SUMMARY (PER-SAMPLE) ======================
+    timing_summary = {
+        "npz_load": _stats(_timing.get("npz_load", [])),
+        "spectrogram": _stats(_timing.get("spectrogram", [])),
+        "inference": _stats(_timing.get("inference", [])),
+        "total": _stats(_timing.get("total", [])),
+    }
+
+    with open(out_dir / "timing_summary.json", "w", encoding="utf-8") as fh:
+        json.dump(timing_summary, fh, indent=2)
+
+    print("\n=== COMPUTATIONAL PERFORMANCE SUMMARY (PER-SAMPLE, ms) ===")
+    for k, v in timing_summary.items():
+        if v:
+            print(f"\n[{k}]")
+            for kk, vv in v.items():
+                print(f"  {kk}: {vv:.3f}")
 
     print(f"\n[DONE] {out_dir}")
 
