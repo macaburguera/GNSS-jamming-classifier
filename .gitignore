@@ -3,6 +3,8 @@ artifacts/
 old/
 .vscode/
 plots/
+__pycache__/
+
 
 # Uncomment to keep a .gitkeep file inside those dirs
 # !artifacts/.gitkeep
