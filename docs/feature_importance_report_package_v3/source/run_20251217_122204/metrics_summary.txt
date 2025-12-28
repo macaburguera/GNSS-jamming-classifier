@@ -1,0 +1,140 @@
+Feature importance + model adequacy (classification, no-SHAP)
+===========================================================
+
+MODEL_PATH  : ..\artifacts\finetuned\finetune_continue_20251216_160409\xgb_20251216_160409\xgb_finetuned_continue.joblib
+FEATURES_DIR: ..\artifacts\finetuned\finetune_continue_20251216_160409\features
+TRAIN_PATH  : ..\artifacts\finetuned\finetune_continue_20251216_160409\features\train_features.npz (FOUND)
+VAL_PATH    : ..\artifacts\finetuned\finetune_continue_20251216_160409\features\val_features.npz   (FOUND)
+TEST_PATH   : ..\artifacts\finetuned\finetune_continue_20251216_160409\features\test_features.npz  (FOUND)
+
+nMI source  : trainval
+EVAL split  : test
+
+N samples (eval): 2748
+N features     : 78
+N classes      : 4
+Classes        : ['NoJam', 'Chirp', 'NB', 'WB']
+
+Data-driven signal (MI / nMI)
+------------------------------
+H(Y) (nats)    : 0.834435
+MI estimated with mutual_info_classif on StandardScaler(X).
+nMI = MI / H(Y) is used to normalize informativeness by label entropy.
+
+Model adequacy (eval)
+---------------------
+Accuracy          : 0.983988
+Balanced accuracy : 0.968947
+Macro F1          : 0.970556
+Log loss          : 0.049549
+
+Classification report
+---------------------
+              precision    recall  f1-score   support
+
+       NoJam       0.99      0.99      0.99      2069
+       Chirp       0.96      0.91      0.93       210
+          NB       0.95      0.97      0.96       199
+          WB       1.00      1.00      1.00       270
+
+    accuracy                           0.98      2748
+   macro avg       0.97      0.97      0.97      2748
+weighted avg       0.98      0.98      0.98      2748
+
+
+Permutation importance (macro-F1 drop)
+--------------------------------------
+Scoring          : macro-F1 (custom scorer with LabelEncoder alignment)
+Baseline macro-F1: 0.970556
+Repeats          : 10
+Interpretation   : larger positive drop => feature is more necessary for performance on eval.
+                 : near-zero => feature is unused/redundant for this model on this eval split.
+
+Top 30 by nMI
+-----------------
+             feature      nMI       MI  rank_nMI
+        spec_entropy 0.700250 0.584314         1
+       spec_flatness 0.681670 0.568810         2
+           spec_gini 0.665434 0.555262         3
+       nb_peak_count 0.648161 0.540849         4
+         bandpower_6 0.639091 0.533280         5
+      spec_spread_Hz 0.637672 0.532096         6
+    nb_peak_salience 0.636317 0.530965         7
+spec_peakiness_ratio 0.629294 0.525105         8
+      instf_kurtosis 0.618933 0.516460         9
+         env_ac_peak 0.615430 0.513537        10
+        instf_std_Hz 0.612333 0.510952        11
+         bandpower_5 0.604086 0.504071        12
+     spec_peak_power 0.595744 0.497110        13
+ spec_symmetry_index 0.593872 0.495547        14
+         bandpower_7 0.587283 0.490050        15
+       tkeo_env_mean 0.583284 0.486713        16
+         bandpower_0 0.581352 0.485101        17
+         bandpower_1 0.579438 0.483503        18
+         bandpower_4 0.554529 0.462719        19
+         bandpower_2 0.554255 0.462490        20
+             pre_rms 0.542506 0.452686        21
+           psd_power 0.542163 0.452400        22
+    spec_centroid_Hz 0.540587 0.451085        23
+       instf_mean_Hz 0.525195 0.438241        24
+stft_centroid_std_Hz 0.508264 0.424114        25
+   spec_rolloff95_Hz 0.487553 0.406831        26
+    env_p95_over_p50 0.485116 0.404798        27
+    instf_dZCR_per_s 0.448108 0.373917        28
+               meanI 0.424606 0.354306        29
+    strong_bins_mean 0.388255 0.323974        30
+
+Top 30 by permutation importance (macro-F1 drop)
+----------------------------------------------------
+                feature  perm_macroF1_drop_mean  perm_macroF1_drop_std  rank_perm_macroF1_drop
+   stft_centroid_std_Hz                0.048230               0.004251                       1
+     spec_kurtosis_mean                0.010794               0.001272                       2
+            bandpower_6                0.003787               0.001829                       3
+       strong_bins_mean                0.003179               0.002924                       4
+            bandpower_5                0.002522               0.000961                       5
+            bandpower_4                0.002498               0.001232                       6
+              psd_power                0.001780               0.001258                       7
+        spec_peak_power                0.001648               0.002047                       8
+            bandpower_2                0.001433               0.000808                       9
+       instf_slope_Hzps                0.001429               0.000688                      10
+          dme_ipi_std_s                0.001093               0.000299                      11
+          spec_flatness                0.000914               0.000914                      12
+          instf_mean_Hz                0.000854               0.000963                      13
+           spec_entropy                0.000827               0.000720                      14
+stft_centroid_zcr_per_s                0.000730               0.000794                      15
+                 corrIQ                0.000685               0.000893                      16
+  circularity_phase_rad                0.000585               0.000805                      17
+       nb_peak_salience                0.000580               0.001243                      18
+         spec_spread_Hz                0.000560               0.000535                      19
+                   stdQ                0.000443               0.000517                      20
+   spec_peakiness_ratio                0.000422               0.000640                      21
+            bandpower_3                0.000399               0.000892                      22
+       cumulant_c42_mag                0.000387               0.000619                      23
+       spec_centroid_Hz                0.000372               0.000559                      24
+                mag_std                0.000367               0.000765                      25
+                  ZCR_Q                0.000353               0.000473                      26
+         instf_kurtosis                0.000349               0.000561                      27
+                  meanI                0.000314               0.000629                      28
+                   stdI                0.000300               0.001088                      29
+       env_p95_over_p50                0.000271               0.000938                      30
+
+Files written
+------------
+- metrics_summary.txt
+- plots\all_features_nMI_sorted_trainval.png
+- plots\all_features_perm_macroF1_drop_sorted_test.png
+- plots\class_support_test.png
+- plots\confidence_correct_vs_wrong.png
+- plots\confidence_hist.png
+- plots\confusion_matrix_test.png
+- plots\confusion_matrix_test_normalized.png
+- plots\cumulative_nMI_trainval.png
+- plots\cumulative_perm_macroF1_drop_test.png
+- plots\per_class_f1_test.png
+- plots\scatter_nMI_vs_perm_macroF1_drop_trainval_vs_test.png
+- plots\top_30_nMI_trainval.png
+- plots\top_30_perm_macroF1_drop_test.png
+- results_features.csv
+- tables\confusion_matrix_test.csv
+- tables\confusion_matrix_test_normalized.csv
+- tables\eval_predictions_test.csv
