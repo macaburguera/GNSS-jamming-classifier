@@ -44,13 +44,15 @@ from collections import Counter
 # ============================ USER VARIABLES ============================
 
 # Path to the labels CSV produced by label_gui.py
-LABELS_CSV = r"E:\Jammertest23\23.09.19 - Jammertest 2023 - Day 2\alt02-ref-labelled\alt02 - reference during kraken test at location 2 for smartphone comparison_labels.csv"
+LABELS_CSV = r"E:\Jammertest23\23.09.18 - Jammertest 2023 - Day 1\Altus06 - 150m\labelled\alt06001_labels.csv"
 
 # Output directory for plots, metrics, logs, etc.
-OUT_DIR    = r"E:\Jammertest23\23.09.19 - Jammertest 2023 - Day 2\plots\alt02-ref-labelled-timed"
+OUT_DIR    = r"E:\Jammertest23\23.09.18 - Jammertest 2023 - Day 1\plots\alt06001_eval_xgb_time_synthetic"
+
 
 # ==> Point to YOUR XGB model trained on these 78 features:
-MODEL_PATH = r"..\artifacts\finetuned\finetune_continue_20251216_160409\xgb_20251216_160409\xgb_finetuned_continue.joblib"
+# MODEL_PATH = r"..\artifacts\finetuned\finetune_continue_20251216_160409\xgb_20251216_160409\xgb_finetuned_continue.joblib"
+MODEL_PATH = r"..\artifacts\jammertest_sim\xgb_run_20251215_222542\xgb_20251215_222636\xgb_trainval.joblib"
 
 # Save options
 SAVE_IMAGES          = False   # Spectrogram+waveform per sample (10k → heavy); set True if you really want them

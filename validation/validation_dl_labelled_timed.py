@@ -85,15 +85,17 @@ def _stats(arr):
 # ============================ USER VARIABLES ============================
 
 # Path to the labels CSV produced by label_gui.py
-LABELS_CSV = r"E:\Jammertest23\23.09.19 - Jammertest 2023 - Day 2\alt02-ref-labelled\alt02 - reference during kraken test at location 2 for smartphone comparison_labels.csv"
+LABELS_CSV = r"E:\Jammertest23\23.09.18 - Jammertest 2023 - Day 1\Altus06 - 150m\labelled\alt06001_labels.csv"
 
 # Output directory for plots, metrics, logs, etc.
-OUT_DIR    = r"E:\Jammertest23\23.09.19 - Jammertest 2023 - Day 2\plots\alt02-ref-labelled-timed-dl"
+OUT_DIR    = r"E:\Jammertest23\23.09.18 - Jammertest 2023 - Day 1\plots\alt06001_eval_dl_time_synthetic"
 
 # Your trained DL checkpoint:
 # - Original training:  ...\run_xxx\model.pt
 # - Fine-tuned bundle:  ...\finetune_xxx\model_finetuned.pt
-MODEL_PT   = r"..\artifacts\finetuned_DL\finetune_spec_20251216_161529\model_finetuned.pt"
+# MODEL_PT   = r"..\artifacts\finetuned_DL\finetune_spec_20251216_161529\model_finetuned.pt"
+MODEL_PT   = r"..\artifacts\jammertest_sim_DL\spec_run_20251215_230651\model.pt"
+
 # Inference options
 DEVICE = None           # None -> auto cuda if available
 BATCH_SIZE = 512        # reduce if you OOM

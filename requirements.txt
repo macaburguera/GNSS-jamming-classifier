@@ -3,15 +3,21 @@ numpy
 scipy
 pandas
 matplotlib
+seaborn
 
 # Machine learning
 scikit-learn
 xgboost
+joblib
 torch
 
 # IO / utilities
 h5py
 joblib
 
-# Optional (only used in zenodo_old/prepare_minirocket.py)
-sktime
+
+tqdm
+pyyaml
+
+sbf-parser
+
