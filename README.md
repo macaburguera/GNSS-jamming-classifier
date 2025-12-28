@@ -38,34 +38,23 @@ The repository is organized as follows:
 ```
 GNSS-jamming-classifier/
 │
-├── artifacts/                       # Trained models and experiment outputs
-│   └── finetuned/
-│       └── finetune_continue_*/     # Fine-tuned models and evaluation artifacts
-│           ├── features/            # Extracted feature datasets (NPZ)
-│           └── xgb_*/               # XGBoost evaluation results
-│               ├── metrics.json
-│               ├── summary.txt
-│               ├── test_cm.csv
-│               ├── test_cm.png
-│               ├── confusion_matrix_test_normalized.csv
-│               └── eval_predictions_test.csv
+├── docs/                 # Project documentation (pipeline, data, models, validation, test, conclusions)
 │
-├── test/                            # Test-time and exploratory scripts
-│   ├── train_eval_cnn_spectrogram.py
-│   ├── predict_incidents.py
-│   └── plot_from_predictions.py
+├── explore/              # Exploratory scripts and analysis experiments
 │
-├── validation/                      # Validation and benchmarking scripts
-│   ├── feature_extractor.py
-│   ├── validation_xgb_labelled.py
-│   ├── validation_xgb_labelled_timed.py
-│   ├── validation_xgb_10features.py
-│   ├── validation_dl_labelled.py
-│   └── validation_dl_labelled_timed.py
+├── retrain/              # Model retraining / domain adaptation with real labelled data
 │
-├── requirements.txt
+├── test/                 # Test-time scripts (unlabelled, in-the-wild data)
+│
+├── train/                # Training scripts (synthetic-data-based training)
+│
+├── validation/           # Validation and benchmarking on labelled real data
+│
 ├── .gitignore
-└── README.md
+├── LICENSE
+├── README.md
+└── requirements.txt
+
 ```
 
 No directories or files outside this structure are required to run the provided experiments.
