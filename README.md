@@ -1,99 +1,225 @@
 # GNSS Jamming Classifier
 
-This repository contains a complete machine-learning pipeline for **GNSS interference and jamming detection** using raw receiver baseband data.
+## Overview
 
-The system operates directly on recorded IQ samples and produces time-aligned, multi-class interference detections, covering:
+This repository contains an **end-to-end GNSS interference and jamming detection pipeline** operating directly on **raw GNSS receiver baseband data**.  
+The project focuses on detecting and classifying common GNSS interference types under both **controlled conditions** and **real-world operational environments**, with particular attention to **robustness, interpretability, and computational scalability**.
 
-- No interference
-- Narrowband interference
-- Chirp / sweep interference
-- Wideband interference
+The system combines:
 
-Two complementary modelling approaches are implemented and evaluated:
+- Synthetic-data-based training
+- Real-world data retraining and validation
+- Feature-based machine learning models (XGBoost)
+- Deep learning models based on spectrogram representations
+- Detailed timing and performance analysis
+- Long-duration testing on unlabelled data
 
-- Feature-based classical machine learning (XGBoost)
-- Deep learning on time–frequency representations (spectrogram CNN)
+The repository is structured to support **research, experimentation, and reproducible evaluation**, rather than providing a black-box detector.
 
-The repository supports controlled experimentation using synthetic data as well as validation and testing on real-world GNSS interference recordings.
+---
+
+## Interference Classes
+
+The implemented models classify each baseband block into one of the following classes:
+
+- **NoJam** – Nominal GNSS signal conditions  
+- **Chirp** – Frequency-swept interference  
+- **NB (Narrowband)** – Continuous-wave or very narrowband interference  
+- **WB (Wideband)** – Broadband, noise-like interference  
+
+These classes cover the most common and operationally relevant GNSS interference types.
 
 ---
 
 ## Repository Structure
 
+The repository is organized as follows:
+
 ```
 GNSS-jamming-classifier/
 │
-├── artifacts/              # Trained models and experiment outputs
-├── docs/                   # Technical documentation
-├── scripts/                # Training, inference, validation scripts
-├── features/               # Feature extraction logic
-├── dl/                     # Deep learning models and preprocessing
-├── utils/                  # Shared utilities
+├── artifacts/                       # Trained models and experiment outputs
+│   └── finetuned/
+│       └── finetune_continue_*/     # Fine-tuned models and evaluation artifacts
+│           ├── features/            # Extracted feature datasets (NPZ)
+│           └── xgb_*/               # XGBoost evaluation results
+│               ├── metrics.json
+│               ├── summary.txt
+│               ├── test_cm.csv
+│               ├── test_cm.png
+│               ├── confusion_matrix_test_normalized.csv
+│               └── eval_predictions_test.csv
+│
+├── test/                            # Test-time and exploratory scripts
+│   ├── train_eval_cnn_spectrogram.py
+│   ├── predict_incidents.py
+│   └── plot_from_predictions.py
+│
+├── validation/                      # Validation and benchmarking scripts
+│   ├── feature_extractor.py
+│   ├── validation_xgb_labelled.py
+│   ├── validation_xgb_labelled_timed.py
+│   ├── validation_xgb_10features.py
+│   ├── validation_dl_labelled.py
+│   └── validation_dl_labelled_timed.py
+│
 ├── requirements.txt
+├── .gitignore
 └── README.md
 ```
+
+No directories or files outside this structure are required to run the provided experiments.
 
 ---
 
 ## Data Sources
 
-Two complementary data sources are used:
+Two complementary data sources are used.
 
-### 1. Synthetic GNSS Interference Generator
-Controlled generation of narrowband, chirp, and wideband interference is used for training and stress testing of the models.  
-This enables precise control over interference parameters and clean ground-truth labels.
+### Synthetic Data
 
-### 2. Real-World GNSS Recordings
-- **Jammertest 2023**: Controlled large-scale GNSS interference experiments with known transmission scenarios and labelled data.
-- **Roadtest (Denmark)**: A 15-day continuous highway recording using a Septentrio receiver, representing in-the-wild, unlabelled GNSS RF environments.
+Synthetic GNSS interference data is generated using a dedicated external generator:
 
-A strict separation is maintained between training, validation, and test data.
+- https://github.com/macaburguera/GNSS_generator
 
----
+This generator produces controlled instances of:
+- Narrowband interference
+- Chirp interference
+- Wideband interference
 
-## Models Implemented
-
-### XGBoost (Feature-based)
-- Full feature model (78 engineered features)
-- Minimal feature model (10 features)
-- Retrained variants using updated datasets
-
-These models rely on explicit spectral, temporal, and statistical features extracted from baseband data.
-
-### Deep Learning (Spectrogram-based)
-- Convolutional neural network operating on STFT-based log-power spectrograms
-- Blockwise inference aligned with SBF baseband sample blocks
-- Designed for efficient large-scale scanning of recordings
+Synthetic data is used for:
+- Initial model training
+- Controlled experiments
+- Feature and model ablation studies
 
 ---
 
-## Validation and Performance
+### Real Data (Jammertest 2023)
 
-The repository includes tools for:
+Real labelled data originates from **Jammertest 2023**, recorded using Septentrio receivers and raw baseband output.
 
-- Accuracy and confusion matrix computation
-- Per-class performance evaluation
-- Detailed computational cost profiling (I/O, preprocessing, inference)
+Labelling is performed with:
 
-Comparative results show that:
+- https://github.com/macaburguera/sbf-labeller
 
-- Feature-based models provide strong accuracy and interpretability
-- The deep learning model achieves significantly lower inference latency and better scalability for long-duration recordings
+This data is used for:
+- Quantitative validation
+- Model retraining (domain adaptation)
+- Performance benchmarking under realistic RF conditions
 
 ---
 
-## Intended Use
+### Real Data (Roadtest – Rodby Highway)
 
-This repository is intended for:
+A long-duration roadtest dataset was collected by operating a receiver on the **Rodby highway (Denmark)** for approximately **15 days**.
 
-- GNSS interference and jamming research
-- Offline analysis of GNSS baseband recordings
-- Evaluation of detection algorithms under controlled and real-world conditions
+Key characteristics:
+- No ground truth labels
+- Strong environmental variability
+- Realistic operational conditions
 
-It is not intended to function as a real-time GNSS receiver.
+This dataset is used strictly for **test-time evaluation**, not validation.
+
+---
+
+## Modelling Approaches
+
+Two modelling strategies are implemented.
+
+### Feature-Based Models (XGBoost)
+
+- Operate on hand-crafted features extracted from IQ samples
+- Two configurations:
+  - Full feature set (≈78 features)
+  - Reduced feature set (10 features)
+- Advantages:
+  - Interpretability
+  - Feature-level diagnostics
+  - Strong performance on structured interference
+
+---
+
+### Deep Learning Models (Spectrogram-Based CNN)
+
+- Operate on STFT spectrograms computed from raw IQ samples
+- End-to-end convolutional neural networks
+- Advantages:
+  - Very low inference latency
+  - High scalability
+  - Strong performance after retraining with real data
+
+---
+
+## Validation
+
+Validation is performed using labelled real data from Jammertest 2023.
+
+Key aspects:
+- Identical datasets used across models
+- Detailed confusion matrices and per-class metrics
+- Explicit timing measurements for each pipeline stage
+
+Relevant scripts are located in:
+- `validation/validation_xgb_*`
+- `validation/validation_dl_*`
+
+Validation artifacts (metrics, confusion matrices, predictions) are stored under:
+- `artifacts/finetuned/`
+
+---
+
+## Test Phase
+
+Testing is performed on **unlabelled roadtest data**, focusing on:
+
+- Detection plausibility
+- Temporal consistency
+- False positive behavior
+- Long-duration stability
+
+Scripts supporting this phase are located in:
+- `test/`
+
+No quantitative accuracy metrics are computed during testing.
+
+---
+
+## Installation
+
+Create a Python environment and install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+The codebase has been developed and tested with Python 3.9+.
+
+---
+
+## Usage Notes
+
+This repository is designed for **experimentation and analysis** rather than turnkey deployment.
+
+Typical workflows include:
+- Training or retraining models
+- Running validation on labelled datasets
+- Inspecting confusion matrices and timing statistics
+- Running long-duration scans on unlabelled recordings
+
+Refer to the individual scripts for usage details.
+
+---
+
+## Scope and Limitations
+
+- The system focuses on **interference detection and classification**, not mitigation
+- It operates at the **baseband signal level**
+- Certain low-SNR cases remain physically ambiguous
+- Results depend on receiver front-end characteristics
 
 ---
 
 ## License
 
-This project is provided for research and experimental use.
+This repository is intended for research and educational use.  
+Refer to the LICENSE file (if present) or the repository metadata for licensing details.
