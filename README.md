@@ -38,7 +38,7 @@ The repository is organized as follows:
 ```
 GNSS-jamming-classifier/
 │
-├── docs/                 # Project documentation (pipeline, data, models, validation, test, conclusions)
+├── docs/                 # Project documentation (usage, pipeline, data, models, validation, test, conclusions)
 │
 ├── explore/              # Exploratory scripts and analysis experiments
 │
