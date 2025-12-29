@@ -1,0 +1,53 @@
+{
+  "model_path": "..\\artifacts\\xgb_minimal_features\\xgb_minimal_20251228_135846\\xgb_minimal_features.joblib",
+  "labels_csv": "E:\\Jammertest23\\23.09.18 - Jammertest 2023 - Day 1\\Altus06 - 150m\\labelled\\alt06001_labels.csv",
+  "feature_count": 10,
+  "feature_names": [
+    "nb_peak_salience",
+    "spec_peakiness_ratio",
+    "spec_flatness",
+    "spec_centroid_Hz",
+    "spec_spread_Hz",
+    "stft_centroid_std_Hz",
+    "stft_centroid_absderiv_med_Hzps",
+    "chirp_slope_Hzps",
+    "chirp_r2",
+    "env_mod_index"
+  ],
+  "accuracy": 0.99495546622527,
+  "timing": {
+    "npz_load": {
+      "count": 12687,
+      "mean_ms": 0.5232380310552196,
+      "median_ms": 0.49760000001697335,
+      "std_ms": 0.08464615168755461,
+      "min_ms": 0.3640999999987571,
+      "max_ms": 2.650899999991907,
+      "p90_ms": 0.5977000000001453,
+      "p95_ms": 0.6493499999990598,
+      "p99_ms": 0.8411280000019515
+    },
+    "feature_extraction": {
+      "count": 12687,
+      "mean_ms": 22.09824119965297,
+      "median_ms": 22.058000000001243,
+      "std_ms": 3.401593655176324,
+      "min_ms": 13.573399999998514,
+      "max_ms": 78.59430000000245,
+      "p90_ms": 25.007819999999015,
+      "p95_ms": 29.11759000000007,
+      "p99_ms": 30.765045999999124
+    },
+    "inference": {
+      "count": 12687,
+      "mean_ms": 2.1487712540396346,
+      "median_ms": 2.0425000000159343,
+      "std_ms": 0.6537228349810281,
+      "min_ms": 1.490499999988515,
+      "max_ms": 37.51250000000006,
+      "p90_ms": 2.4606399999996142,
+      "p95_ms": 2.611570000001251,
+      "p99_ms": 3.286968000010119
+    }
+  }
+}

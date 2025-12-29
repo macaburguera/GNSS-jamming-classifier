@@ -1,0 +1,5 @@
+val_macroF1  = 0.972746
+test_macroF1 = 0.970556
+val_acc      = 0.983988
+test_acc     = 0.983988
+model_out    = C:\Users\macab\OneDrive - Danmarks Tekniske Universitet\1. DTU\4. Fall 2025\gnss jamming\GNSS-jamming-classifier\artifacts\finetuned\finetune_continue_20251216_160409\xgb_20251216_160409\xgb_finetuned_continue.joblib

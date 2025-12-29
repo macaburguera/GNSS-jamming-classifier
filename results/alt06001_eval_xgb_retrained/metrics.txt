@@ -1,0 +1,33 @@
+Accuracy: 0.997163
+Labels used for metrics: ['NoJam', 'Chirp', 'NB', 'WB', 'Interference']
+GT counts:
+  NoJam: 8470
+  Chirp: 2843
+  NB: 1342
+  WB: 32
+  Interference: 2
+Pred counts:
+  NoJam: 8474
+  Chirp: 2846
+  NB: 1338
+  WB: 31
+  Interference: 0
+Confusion matrix (rows=True, cols=Pred):
+8456,2,12,0,0
+1,2842,0,0,0
+16,2,1324,0,0
+0,0,1,31,0
+1,0,1,0,0
+
+Classification report:
+              precision    recall  f1-score   support
+
+       NoJam       1.00      1.00      1.00      8470
+       Chirp       1.00      1.00      1.00      2843
+          NB       0.99      0.99      0.99      1342
+          WB       1.00      0.97      0.98        32
+Interference       0.00      0.00      0.00         2
+
+    accuracy                           1.00     12689
+   macro avg       0.80      0.79      0.79     12689
+weighted avg       1.00      1.00      1.00     12689

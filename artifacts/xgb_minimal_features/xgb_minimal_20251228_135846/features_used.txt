@@ -1,0 +1,10 @@
+nb_peak_salience
+spec_peakiness_ratio
+spec_flatness
+spec_centroid_Hz
+spec_spread_Hz
+stft_centroid_std_Hz
+stft_centroid_absderiv_med_Hzps
+chirp_slope_Hzps
+chirp_r2
+env_mod_index

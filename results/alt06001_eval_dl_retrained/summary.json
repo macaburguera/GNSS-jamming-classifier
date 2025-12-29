@@ -1,0 +1,45 @@
+{
+  "labels_csv_path": "E:\\Jammertest23\\23.09.18 - Jammertest 2023 - Day 1\\Altus06 - 150m\\labelled\\alt06001_labels.csv",
+  "out_dir": "E:\\Jammertest23\\23.09.18 - Jammertest 2023 - Day 1\\plots\\alt06001_eval_dl_time",
+  "model_pt": "C:\\Users\\macab\\OneDrive - Danmarks Tekniske Universitet\\1. DTU\\4. Fall 2025\\gnss jamming\\GNSS-jamming-classifier\\artifacts\\finetuned_DL\\finetune_spec_20251216_161529\\model_finetuned.pt",
+  "checkpoint_kind": "finetune_bundle",
+  "model_classes": [
+    "NoJam",
+    "Chirp",
+    "NB",
+    "WB"
+  ],
+  "extra_labels": [
+    "Interference"
+  ],
+  "device": "cuda",
+  "n_rows_csv": 12689,
+  "n_kept": 12689,
+  "n_predicted": 12689,
+  "n_skipped_bad_label": 0,
+  "n_skipped_missing_npz": 0,
+  "n_skipped_bad_npz": 0,
+  "accuracy": 0.9978721727480495,
+  "labels_for_metrics": [
+    "NoJam",
+    "Chirp",
+    "NB",
+    "WB",
+    "Interference"
+  ],
+  "spec_used": {
+    "TARGET_LEN": 2048,
+    "NFFT": 256,
+    "WIN": 256,
+    "HOP": 64,
+    "SPEC_MODE": "logpow",
+    "SPEC_NORM": "zscore",
+    "FFTSHIFT": true,
+    "EPS": 1e-08,
+    "MODEL": "se_cnn",
+    "VIT_PATCH": 8,
+    "VIT_EMBED_DIM": 192,
+    "VIT_DEPTH": 6,
+    "VIT_HEADS": 6
+  }
+}

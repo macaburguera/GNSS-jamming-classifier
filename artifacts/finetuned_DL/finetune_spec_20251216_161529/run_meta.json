@@ -1,0 +1,88 @@
+{
+  "started_at": "2025-12-16 17:10:31",
+  "run_dir": "C:\\Users\\macab\\OneDrive - Danmarks Tekniske Universitet\\1. DTU\\4. Fall 2025\\gnss jamming\\GNSS-jamming-classifier\\artifacts\\finetuned_DL\\finetune_spec_20251216_161529",
+  "labels_csvs": [
+    "E:\\Jammertest23\\23.09.20 - Jammertest 2023 - Day 3\\Roadside test\\alt01004-labelled\\alt01004_labels.csv",
+    "E:\\Jammertest23\\23.09.19 - Jammertest 2023 - Day 2\\alt06-meac-afternoon-labelled\\alt06 - Meaconing afternoon_labels.csv"
+  ],
+  "model_in": "C:\\Users\\macab\\OneDrive - Danmarks Tekniske Universitet\\1. DTU\\4. Fall 2025\\gnss jamming\\GNSS-jamming-classifier\\artifacts\\jammertest_sim_DL\\spec_run_20251215_230651\\model.pt",
+  "model_kind": "se_cnn",
+  "classes": [
+    "NoJam",
+    "Chirp",
+    "NB",
+    "WB"
+  ],
+  "device": "cuda",
+  "split_mode": "random",
+  "counts": {
+    "train": {
+      "NoJam": 9658,
+      "Chirp": 944,
+      "NB": 995,
+      "WB": 1227
+    },
+    "val": {
+      "NoJam": 2028,
+      "Chirp": 205,
+      "NB": 247,
+      "WB": 268
+    },
+    "test": {
+      "NoJam": 2069,
+      "Chirp": 210,
+      "NB": 199,
+      "WB": 270
+    }
+  },
+  "preproc": {
+    "fs_default": 60000000.0,
+    "target_len": 2048,
+    "nfft": 256,
+    "win": 256,
+    "hop": 64,
+    "spec_mode": "logpow",
+    "spec_norm": "zscore",
+    "fftshift": true,
+    "eps": 1e-08,
+    "use_npz_fs": true
+  },
+  "rehearsal": {
+    "enabled": false,
+    "synth_base": "",
+    "only_classes": [
+      "WB"
+    ],
+    "max_per_class": 800,
+    "splits": [
+      "TRAIN"
+    ]
+  },
+  "best_epoch": 41,
+  "best_val_loss": 0.06986232672098162,
+  "val_metrics": {
+    "loss": 0.06986232672098162,
+    "acc": 0.9854439592430859,
+    "macro_f1": 0.975960164662266
+  },
+  "test_metrics": {
+    "loss": 0.050927522623373224,
+    "acc": 0.9868995633187773,
+    "macro_f1": 0.976250505653708
+  },
+  "finetune_config": {
+    "LABELS_CSVS": [
+      "E:\\Jammertest23\\23.09.20 - Jammertest 2023 - Day 3\\Roadside test\\alt01004-labelled\\alt01004_labels.csv",
+      "E:\\Jammertest23\\23.09.19 - Jammertest 2023 - Day 2\\alt06-meac-afternoon-labelled\\alt06 - Meaconing afternoon_labels.csv"
+    ],
+    "DEDUPLICATE_BY_PATH": true,
+    "MODEL_IN": "..\\artifacts\\jammertest_sim_DL\\spec_run_20251215_230651\\model.pt",
+    "OUT_ROOT": "..\\artifacts\\finetuned_DL",
+    "RUN_NAME": null,
+    "CLASSES": [
+      "NoJam",
+      "Chirp",
+      "NB",
+      "WB"
+    ],
+    "IGNORED_LABELS": 

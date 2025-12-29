@@ -1,0 +1,31 @@
+{
+  "labels_csvs": [
+    "E:\\Jammertest23\\23.09.20 - Jammertest 2023 - Day 3\\Roadside test\\alt01004-labelled\\alt01004_labels.csv",
+    "E:\\Jammertest23\\23.09.19 - Jammertest 2023 - Day 2\\alt06-meac-afternoon-labelled\\alt06 - Meaconing afternoon_labels.csv"
+  ],
+  "model_in": "C:\\Users\\macab\\OneDrive - Danmarks Tekniske Universitet\\1. DTU\\4. Fall 2025\\gnss jamming\\GNSS-jamming-classifier\\artifacts\\jammertest_sim\\xgb_run_20251215_222542\\xgb_20251215_222636\\xgb_trainval.joblib",
+  "model_out": "C:\\Users\\macab\\OneDrive - Danmarks Tekniske Universitet\\1. DTU\\4. Fall 2025\\gnss jamming\\GNSS-jamming-classifier\\artifacts\\finetuned\\finetune_continue_20251216_160409\\xgb_20251216_160409\\xgb_finetuned_continue.joblib",
+  "classes": [
+    "NoJam",
+    "Chirp",
+    "NB",
+    "WB"
+  ],
+  "split_mode": "random",
+  "train_frac": 0.7,
+  "val_frac": 0.15,
+  "continue_boosting": true,
+  "extra_rounds_each_stage": 250,
+  "finetune_learning_rate": 0.05,
+  "balance_classes": true,
+  "final_refit_on_trainval": true,
+  "rehearsal_enabled": false,
+  "rehearsal_only_classes": [
+    "WB"
+  ],
+  "rehearsal_max_per_class": 1000,
+  "val_acc": 0.9839883551673945,
+  "val_macro_f1": 0.9727462289945148,
+  "test_acc": 0.9839883551673945,
+  "test_macro_f1": 0.970556108470872
+}

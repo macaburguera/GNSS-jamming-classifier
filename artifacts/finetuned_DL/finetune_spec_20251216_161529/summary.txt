@@ -1,0 +1,4 @@
+best_epoch=41
+best_val_loss_during_train=0.069862
+val_loss=0.069862  val_acc=0.985444  val_macroF1=0.975960
+test_loss=0.050928  test_acc=0.986900  test_macroF1=0.976251

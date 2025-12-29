@@ -1,5 +1,6 @@
 # Ignore directories named "artifacts" and "old" anywhere in the repo
-artifacts/
+# artifacts/
+# results/
 old/
 .vscode/
 plots/

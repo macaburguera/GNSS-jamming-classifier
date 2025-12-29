@@ -1,0 +1,100 @@
+{
+  "started_at": "2025-12-16 02:01:24",
+  "run_dir": "..\\artifacts\\jammertest_sim_DL\\spec_run_20251215_230651",
+  "classes": [
+    "NoJam",
+    "Chirp",
+    "NB",
+    "WB"
+  ],
+  "fs_hz": 60000000.0,
+  "target_len": 2048,
+  "spec": {
+    "nfft": 256,
+    "win": 256,
+    "hop": 64,
+    "mode": "logpow",
+    "norm": "zscore",
+    "fftshift": true
+  },
+  "num_train": 8000,
+  "num_val": 6000,
+  "num_test": 6000,
+  "class_counts": {
+    "train": {
+      "NoJam": 2000,
+      "Chirp": 2000,
+      "NB": 2000,
+      "WB": 2000
+    },
+    "val": {
+      "NoJam": 1500,
+      "Chirp": 1500,
+      "NB": 1500,
+      "WB": 1500
+    },
+    "test": {
+      "NoJam": 1500,
+      "Chirp": 1500,
+      "NB": 1500,
+      "WB": 1500
+    }
+  },
+  "device": "cuda",
+  "best_epoch": 15,
+  "best_val_loss": 0.05461798246992597,
+  "config": {
+    "BASE": "D:\\datasets\\maca_gen\\datasets_jammertest",
+    "CLASSES": [
+      "NoJam",
+      "Chirp",
+      "NB",
+      "WB"
+    ],
+    "VAR": "GNSS_plus_Jammer_awgn",
+    "FS_HZ": 60000000.0,
+    "TARGET_LEN": 2048,
+    "CAP_PER_CLASS": null,
+    "OUT_ROOT": "..\\artifacts\\jammertest_sim_DL",
+    "RUN_NAME": null,
+    "BATCH_SIZE": 256,
+    "EPOCHS": 80,
+    "LR": 0.001,
+    "WEIGHT_DECAY": 0.001,
+    "PATIENCE": 60,
+    "NUM_WORKERS": 0,
+    "SEED": 42,
+    "DEVICE": null,
+    "VERBOSE": true,
+    "BATCH_LOG_EVERY": 0,
+    "NFFT": 256,
+    "WIN": 256,
+    "HOP": 64,
+    "SPEC_MODE": "logpow",
+    "SPEC_NORM": "zscore",
+    "FFTSHIFT": true,
+    "EPS": 1e-08,
+    "AUGMENT": true,
+    "CFO_JITTER": false,
+    "TIME_SHIFT": true,
+    "MODEL": "se_cnn",
+    "VIT_PATCH": 8,
+    "VIT_EMBED_DIM": 192,
+    "VIT_DEPTH": 6,
+    "VIT_HEADS": 6,
+    "VIT_MLP_RATIO": 4.0,
+    "VIT_DROPOUT": 0.1,
+    "JSR_BINS": [
+      0,
+      10,
+      25,
+      40
+    ],
+    "CNR_BINS": [
+      20,
+      30,
+      40,
+      60
+    ]
+  }
+}

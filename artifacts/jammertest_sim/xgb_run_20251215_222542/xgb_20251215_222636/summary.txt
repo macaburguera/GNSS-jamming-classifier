@@ -1,0 +1,2 @@
+val_macroF1 = 0.993000
+test_macroF1 = 0.992671
