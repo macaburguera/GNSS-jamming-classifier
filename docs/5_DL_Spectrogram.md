@@ -1,248 +1,158 @@
-# 5. DL Spectrogram
+# 5. Deep Learning: Spectrogram SE-CNN
 
-## Introduction
+This project includes a deep learning classifier that operates on **spectrograms** derived from IQ tiles.
 
-This document describes the deep learning–based interference detection approach implemented in this repository. The model operates on **time–frequency representations (spectrograms)** derived from raw GNSS baseband recordings and uses a convolutional neural network (CNN) to classify interference types at the block level.
-
-The document is structured to first introduce the theoretical foundations of spectrogram-based analysis, followed by a detailed explanation of the concrete design choices, parameters, and training strategy used in this project.
-
----
-
-## Motivation for a Spectrogram-Based Approach
-
-Raw baseband IQ samples contain rich information about interference phenomena, but this information is not always easily separable in the time domain. Many GNSS interference types are more naturally characterized by their **spectral structure and temporal evolution**, such as:
-
-- Narrowband tones appearing as persistent spectral lines
-- Chirp interference appearing as slanted frequency tracks
-- Wideband interference appearing as broadband energy increases
-
-Time–frequency representations make these patterns explicit and visually separable, which motivates the use of spectrograms as model inputs.
+Pipeline summary:
+1. IQ tile $z[n]$ → STFT spectrogram
+2. 2D CNN classifier (SE-CNN)
+3. Optional retraining on labelled real data
 
 ---
 
-## Short-Time Fourier Transform (STFT)
+## 5.1 Why a spectrogram CNN?
 
-### Definition
+Jammer types have characteristic time–frequency patterns:
 
-The spectrogram used in this project is computed via the **Short-Time Fourier Transform (STFT)**. Given a discrete-time signal $x[n]$, the STFT is defined as:
+- NB: a narrow spectral peak persistent over time
+- WB: broadband elevated energy (raised noise floor)
+- Chirp: a diagonal ridge (frequency sweep)
+
+A CNN can learn these patterns directly from spectrogram images, without hand-crafted features.
+
+---
+
+## 5.2 Spectrogram definition and parameters
+
+The STFT is computed as:
 
 $$
-X(m, \omega) = \sum_{n=-\infty}^{\infty} x[n] \, w[n - m] \, e^{-j \omega n}
-$$
-
-where:
-- $w[n]$ is a finite-length window function,
-- $m$ indexes the time frame,
-- $\omega$ is the angular frequency.
-
-The **spectrogram** is obtained as the squared magnitude:
-
-$$
-S(m, \omega) = |X(m, \omega)|^2
-$$
-
----
-
-### Interpretation
-
-The STFT trades frequency resolution for time resolution. By sliding a window across the signal, it captures how spectral content evolves over time. This is particularly well suited for interference detection, where temporal dynamics are informative.
-
----
-
-## Spectrogram Parameters Used
-
-The following parameters are used consistently across training, validation, and inference.
-
-### FFT Length (`nfft`)
-
-- Defines the number of frequency bins.
-- Controls frequency resolution:
-  
-$$
-\Delta f = \frac{f_s}{N_{\text{FFT}}}
-$$
-
-A fixed FFT length is used to maintain consistent input dimensions.
-
----
-
-### Window Length (`win_length`)
-
-- Determines the temporal extent of each STFT frame.
-- Short windows improve time resolution but reduce frequency resolution.
-- Longer windows improve frequency resolution but smear fast transients.
-
-A moderate window length is chosen to balance chirp detectability and narrowband resolution.
-
----
-
-### Hop Size (`hop_length`)
-
-- Defines the step between consecutive windows.
-- Overlapping windows are used:
-
-$$
-\text{overlap} = 1 - \frac{\text{hop}}{\text{win}}
-$$
-
-Overlap improves temporal continuity and robustness to alignment effects.
-
----
-
-### Window Function
-
-A standard tapering window (e.g. Hann) is applied to reduce spectral leakage. This is particularly important for narrowband interference, where leakage could blur spectral lines.
-
----
-
-### Log-Power Scaling
-
-Raw spectrogram magnitudes span several orders of magnitude. To stabilize learning, the following transformation is applied:
-
-$$
-S_{\text{log}} = \log(S + \epsilon)
-$$
-
-where $\epsilon$ is a small constant to avoid numerical issues.
-
-Log-power scaling:
-- Compresses dynamic range
-- Emphasizes weak but structured interference
-- Improves numerical conditioning for neural networks
-
----
-
-### Frequency Axis Handling
-
-The spectrogram is **FFT-shifted**, centering DC in the frequency axis. This produces symmetric representations and avoids artificial edge effects in convolutional filters.
-
----
-
-### Normalization
-
-Per-spectrogram normalization is applied (z-score):
-
-$$
-S_{\text{norm}} = \frac{S - \mu}{\sigma}
-$$
-
-This removes absolute power dependence and forces the model to focus on relative structure.
-
----
-
-## Input Representation
-
-Each baseband block is transformed into a **2D spectrogram tensor**, which is treated as a single-channel image:
-
-- Height: frequency bins
-- Width: time frames
-- Channels: 1
-
-This representation allows direct reuse of standard CNN architectures.
-
----
-
-## Neural Network Architecture
-
-The deep learning model is a convolutional neural network composed of:
-
-- Convolutional layers for local pattern extraction
-- Non-linear activations
-- Pooling layers for spatial invariance
-- Fully connected layers for classification
-
-The architecture is intentionally compact to:
-
-- Reduce inference latency
-- Avoid overfitting
-- Support large-scale scanning of recordings
-
----
-
-## Training Strategy
-
-### Dataset Composition
-
-Training relies primarily on **synthetic spectrograms** generated from the synthetic interference generator. Real labelled data is introduced during retraining to reduce domain mismatch.
-
----
-
-### Loss Function
-
-A categorical cross-entropy loss is used:
-
-$$
-\mathcal{L} = - \sum_{c} y_c \log(\hat{y}_c)
+X(m,k) = \sum_n z[n] \, w[n-mH] \, e^{-j 2\pi kn/N}
 $$
 
 where:
-- $y_c$ is the true class label,
-- $\hat{y}_c$ is the predicted class probability.
+- $N$ is FFT size,
+- $H$ is hop length,
+- $w[\cdot]$ is the window.
+
+The model uses log-power magnitude spectrograms with z-score normalization.
+
+Parameters used in the main synthetic DL run (stored in `run_meta.json`):
+
+| Parameter | Value |
+|---|---:|
+| $f_s$ | 60000000 Hz |
+| Tile length $N$ | 2048 samples |
+| NFFT | 256 |
+| Window length | 256 |
+| Hop | 64 |
+| Mode | `logpow` |
+| Norm | `zscore` |
+| FFT shift | True |
 
 ---
 
-### Optimization
+## 5.3 IQ-domain augmentation (exact implementation)
 
-Standard stochastic gradient-based optimization is used, with:
+Augmentation is implemented in `train/train_eval_cnn_spectrogram.py` and applies:
 
-- Fixed learning rate schedules
-- Mini-batch training
-- Early stopping based on validation performance
+- amplitude scaling: $\text{amp} \sim U(0.9, 1.1)$
+- random phase rotation: $\phi \sim U(-\pi, \pi)$
+- optional CFO jitter: $f_\text{off} \sim U(-200\,\text{kHz}, 200\,\text{kHz})$
+- optional time shift: $\Delta n \in [-64, 64]$ (circular roll)
 
-Exact optimizer parameters are stored alongside model checkpoints.
-
----
-
-## Retraining and Domain Adaptation
-
-Retraining introduces labelled real-world spectrograms to the training set while keeping:
-
-- Network architecture fixed
-- Spectrogram parameters fixed
-
-This ensures that improvements stem from data diversity rather than architectural changes.
+In the stored synthetic run:
+- AUGMENT = True
+- TIME_SHIFT = True
+- CFO_JITTER = False
 
 ---
 
-## Inference Pipeline
+## 5.4 Model architecture (exact)
 
-During inference:
+The SE-CNN used in this repo is implemented as `SpecCNN2D(..., use_se=True)`.
 
-1. Baseband blocks are loaded sequentially
-2. Spectrograms are computed on-the-fly using the same parameters
-3. Spectrograms are normalized and passed to the CNN
-4. Per-block class probabilities are produced
+From the model definition in `train/train_eval_cnn_spectrogram.py`:
+- channel progression: **[32, 64, 128, 192]**
+- three pooling stages (MaxPool2d(2))
+- global average pooling head + MLP:
+  - Linear(192 → 256) + Dropout(0.2) + Linear(256 → classes)
 
-Inference is optimized for throughput and low latency.
-
----
-
-## Computational Characteristics
-
-The DL pipeline exhibits:
-
-- Very low inference time per block
-- Predictable computational cost
-- Reduced preprocessing overhead compared to feature-based pipelines
-
-Timing measurements confirm that spectrogram generation and inference are both efficient.
+Squeeze-and-Excitation is enabled when `MODEL="se_cnn"`.
 
 ---
 
-## Strengths and Limitations
+## 5.5 Retraining (domain adaptation) configuration
 
-### Strengths
-- Strong generalization to unseen interference patterns
-- High scalability for long recordings
-- Minimal manual feature engineering
+### DL retraining (domain adaptation) configuration
 
-### Limitations
-- Reduced interpretability compared to feature-based models
-- Dependence on spectrogram parameter choices
-- Sensitivity to domain mismatch if retraining is omitted
+The retraining script is `retrain/retrain_dl.py`. Key settings in the CONFIG block:
+
+| Setting | Value |
+|---|---:|
+| SPLIT_MODE | `"random",  # "time" or "random"` |
+| TRAIN_FRAC | `0.70` |
+| VAL_FRAC | `0.15` |
+| SEED | `42` |
+| BATCH_SIZE | `128` |
+| FINETUNE_EPOCHS | `50` |
+| LR | `2e-4` |
+| WEIGHT_DECAY | `1e-3` |
+| FREEZE_BACKBONE | `True` |
+| FREEZE_EPOCHS | `5` |
+| PATIENCE | `25` |
+| IGNORED_LABELS | `{"Interference"}` |
 
 ---
 
-## Summary
+## 5.6 Validation results (Alt06001)
 
-The spectrogram-based deep learning approach provides a scalable and computationally efficient solution for GNSS interference detection. By carefully selecting STFT parameters and enforcing consistency across training and inference, the model effectively captures the spectral-temporal structure of common interference types while remaining suitable for large-scale real-world analysis.
+Summary (measured from `results/*/samples_eval.csv` and timing files):
+
+| Model | Acc (all) | Acc (4-class) | Macro-F1 (4-class) | FAR (NoJam) | Mean latency/tile [ms] |
+|---|---:|---:|---:|---:|---:|
+| XGB (synthetic-only, 78 feats) | 0.913153 | 0.913297 | 0.620687 | 0.001535 | 31.657 |
+| XGB (retrained, 78 feats) | 0.997163 | 0.997320 | 0.992462 | 0.001653 | 30.428 |
+| XGB (retrained, 10 feats) | 0.994955 | 0.994955 | 0.833918 | 0.003306 | 24.770 |
+| DL SE-CNN (synthetic-only) | 0.744582 | 0.744699 | 0.599367 | 0.325148 | 1.118 |
+| DL SE-CNN (retrained) | 0.997872 | 0.998029 | 0.997511 | 0.002597 | 1.688 |
+
+Performance plot:
+
+![](assets/alt06001_perf_acc_macroF1.png)
+
+Latency plot (log scale):
+
+![](assets/alt06001_latency_ms.png)
+
+---
+
+## 5.7 Interpretation: synthetic→real gap
+
+The strongest empirical finding is the domain gap:
+
+- **DL trained only on synthetic data** has high FAR on NoJam.
+- **DL retrained on real labelled tiles** achieves near-perfect performance and low FAR.
+
+Numerically (Alt06001):
+- DL synthetic-only FAR(NoJam) ≈ 0.325
+- DL retrained FAR(NoJam) ≈ 0.002597
+
+---
+
+## 5.8 Where to find detailed outputs
+
+- `results/alt06001_eval_dl_synthetic/`
+- `results/alt06001_eval_dl_retrained/`
+
+These folders include:
+- confusion matrices
+- per-tile predictions
+- `timing_summary.json` (npz_load, spectrogram, inference, total)
+
+---
+
+## 5.9 Takeaways (DL)
+
+- Synthetic-only DL is not deployable due to false alarms.
+- After retraining, DL matches or exceeds XGB accuracy while being ~10–30× faster per tile.
+- DL is the preferred pipeline when throughput/latency is a primary constraint.
