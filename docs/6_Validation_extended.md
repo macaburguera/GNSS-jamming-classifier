@@ -1,161 +1,221 @@
-# 6. Validation (Extended – Final)
+# 6. Validation (Extended)
 
-## 6.1 Scope, Dataset and Experimental Conditions
+This document reports the **final, measured** validation results for all models on the same labelled real dataset, and **replaces** any earlier approximate numbers.
 
-This validation stage evaluates all models on a **single, fixed, labelled dataset**, ensuring that every comparison reflects intrinsic model behavior rather than data variation.
+All metrics below are computed from the per-sample outputs in:
+
+- `results/*/samples_eval.csv`
+- `results/*/summary.json`
+- `results/*/timing_summary.json` (DL)
+
+---
+
+## 6.1 Dataset and evaluation protocol
 
 **Dataset**
-- Campaign: Jammertest 2023
-- Day: Day 1
-- Receiver: Altus06
-- Scenario: 150 m
-- Label file: `alt06001_labels.csv`
-- Evaluated blocks: **12,689**
+- Campaign: **Jammertest 2023**
+- Day: **Day 1**
+- Receiver: **Altus06**
+- Scenario: **150 m**
+- Labels: `alt06001_labels.csv`
+- Evaluated blocks: **12,689** (block-wise evaluation)
 
-All models were evaluated:
-- On the **exact same blocks**
-- With identical label normalization
-- Without post-processing, smoothing, or temporal aggregation
+**Class distribution (ground truth)**
 
-Validation therefore provides a **strict, apples-to-apples comparison** across all modelling strategies.
-
----
-
-## 6.2 Models Evaluated
-
-Five models are considered, enabling separation of architectural effects, feature dimensionality effects, and retraining (domain adaptation) effects.
-
-### Feature-Based (XGBoost)
-1. XGB-78 (synthetic-only training)
-2. XGB-78 (retrained with real labelled data)
-3. XGB-10 (retrained with real labelled data)
-
-### Deep Learning (Spectrogram CNN)
-4. DL spectrogram (synthetic-only training)
-5. DL spectrogram (retrained with real labelled data)
-
----
-
-## 6.3 Class Distribution and Imbalance
-
-| Class | Blocks | Percentage |
-|------|--------|------------|
-| NoJam | 8,470 | 66.7% |
-| Chirp | 2,843 | 22.4% |
-| NB | 1,342 | 10.6% |
+| GT label | Count | Share |
+|---|---|---|
+| NoJam | 8470 | 66.75% |
+| Chirp | 2843 | 22.41% |
+| NB | 1342 | 10.58% |
 | WB | 32 | 0.25% |
-| Interference | 2 | <0.02% |
-| **Total** | **12,689** | 100% |
+| Interference | 2 | 0.02% |
 
-The dataset is **strongly imbalanced**, particularly for wideband interference. As a consequence, global accuracy alone is insufficient and must be complemented by per-class and confusion-matrix analysis.
+Notes:
+- The dataset is **highly imbalanced** for **WB** (32 blocks, 0.25%).
+- There are **2 blocks labelled `Interference`** (0.02%). These are **not** included in the main 4-class confusion matrices, but are reported separately.
 
----
-
-## 6.4 Global Accuracy Comparison
-
-| Model | Training Data | Accuracy |
-|------|---------------|----------|
-| XGB-78 | Synthetic only | ≈ 0.985–0.990 |
-| XGB-78 | Retrained | **0.9972** |
-| XGB-10 | Retrained | ≈ 0.990 |
-| DL spectrogram | Synthetic only | ≈ 0.985–0.990 |
-| DL spectrogram | Retrained | **0.9979** |
-
-Retraining yields a **consistent accuracy gain of ~0.7–1.2 percentage points**, but the most significant improvements are visible in class-specific behavior rather than in the global metric.
+**Evaluations included (directories)**
+- XGB synthetic-only: `results/alt06001_eval_xgb_synthetic/`
+- XGB retrained: `results/alt06001_eval_xgb_retrained/`
+- XGB retrained (10 features): `results/alt06001_eval_xgb_retrained_10feat/`
+- DL synthetic-only: `results/alt06001_eval_dl_synthetic/`
+- DL retrained: `results/alt06001_eval_dl_retrained/`
 
 ---
 
-## 6.5 Confusion Behavior and Class Mismatches
+## 6.2 Summary metrics (corrected)
 
-### 6.5.1 Synthetic-Only Models
+Two accuracies are reported:
+- **Acc (all)**: includes the 2 `Interference` blocks (when present in `samples_eval.csv`).
+- **Acc (4-class)**: computed on **NoJam / Chirp / NB / WB** only.
 
-Both synthetic-only models (XGB-78 and DL spectrogram) show:
-- Excellent Chirp detection
-- Good NB detection at high SNR
-- **Poor or unstable WB detection**
-- Increased NB ↔ NoJam confusion
+| Model                           | Acc (all) | Acc (4-class) | Macro-F1 (4-class) | FAR NoJam | Recall NB | Recall WB | Mean ms/block |
+| ------------------------------- | --------- | ------------- | ------------------ | --------- | --------- | --------- | ------------- |
+| XGB-78 (synthetic-only)         | 0.913153  | 0.913297      | 0.620660           | 0.15%     | 30.48%    | 56.25%    | 31.657        |
+| XGB-78 (retrained)              | 0.997163  | 0.997320      | 0.992355           | 0.17%     | 98.66%    | 96.88%    | 30.428        |
+| XGB-10 (retrained)              | 0.994955  | 0.994955      | 0.833918           | 0.33%     | 99.25%    | 21.88%    | 24.770        |
+| DL spectrogram (synthetic-only) | 0.744582  | 0.744699      | 0.599334           | 32.51%    | 65.13%    | 100.00%   | 1.118         |
+| DL spectrogram (retrained)      | 0.997872  | 0.998029      | 0.997375           | 0.26%     | 99.85%    | 100.00%   | 1.688         |
 
-This reflects **domain mismatch** between synthetic interference and real RF recordings, particularly for WB where spectral texture, noise coloration, and hardware effects differ substantially.
-
----
-
-### 6.5.2 Effect of Retraining
-
-Retraining with real labelled data produces the following qualitative changes:
-
-| Effect | XGB-78 | DL Spectrogram |
-|------|--------|---------------|
-| WB recall | Large improvement (≈97%) | Perfect (100%) |
-| NB ↔ NoJam confusion | Slight reduction | Stabilized |
-| Chirp detection | Unchanged | Unchanged |
-
-Retraining primarily improves **rare and structurally complex classes**, rather than already-easy classes.
+### Interpretation (what matters)
+- **DL synthetic-only does *not* generalize**: very high false alarms on **NoJam** (≈32.5%).
+- **XGB synthetic-only generalizes better in FAR**, but misses a large fraction of **NB** (recall ≈30.5%) and still struggles with **WB**.
+- **Retraining on real data** pushes both approaches close to ceiling on this dataset.
+- The **10-feature XGB** keeps strong NB performance but collapses on **WB** (WB recall ≈21.9%), mainly predicting WB as NB.
 
 ---
 
-## 6.6 Per-Class Recall (Post-Retraining)
+## 6.3 Confusion matrices (4-class)
 
-| Class | XGB-78 | XGB-10 | DL |
-|------|--------|--------|----|
-| NoJam | ~99.8% | ~99.7% | ~99.7% |
-| Chirp | ~99.96% | ~99.8% | ~99.96% |
-| NB | ~99.85% | ~99.3% | ~99.85% |
-| WB | ~97% | 100% | 100% |
+All matrices below use **row-normalization** over the 4 primary classes (NoJam/Chirp/NB/WB).
+The corresponding images are stored under `results/*/`.
 
-NB vs NoJam remains the dominant residual ambiguity across all models, reflecting physical signal overlap at low SNR rather than modelling failure.
+### 6.3.1 XGB-78 (synthetic-only)
 
----
+![XGB synthetic confusion matrix](../results/alt06001_eval_xgb_synthetic/confusion_matrix.png)
 
-## 6.7 Timing Analysis (Mean Per Block)
+Row-normalized values (reconstructed from `samples_eval.csv`):
 
-### Feature-Based Models
+| GT \ Pred | NoJam | Chirp | NB | WB |
+|---|---|---|---|---|
+| NoJam | 0.9985 | 0.0002 | 0.0013 | 0.0000 |
+| Chirp | 0.0060 | 0.9508 | 0.0433 | 0.0000 |
+| NB | 0.4985 | 0.0007 | 0.3048 | 0.1960 |
+| WB | 0.4375 | 0.0000 | 0.0000 | 0.5625 |
 
-| Model | NPZ Load | Feature Extraction | Inference | Total |
-|------|----------|-------------------|-----------|-------|
-| XGB-78 | ~10 ms | ~25 ms | ~3 ms | **~45 ms** |
-| XGB-10 | ~10 ms | ~18 ms | ~2.6 ms | **~31 ms** |
-
-Feature extraction dominates runtime (>55%). Feature reduction yields a ~30% speedup.
+Key failure mode:
+- **NB → NoJam** is dominant (≈49.9% of NB predicted as NoJam).
 
 ---
 
-### Deep Learning Model
+### 6.3.2 XGB-78 (retrained)
 
-| Stage | Mean Time |
-|------|-----------|
-| NPZ load | ~1.1 ms |
-| STFT | ~0.6 ms |
-| Inference | ~0.5 ms |
-| **Total** | **~1.8 ms** |
+![XGB retrained confusion matrix](../results/alt06001_eval_xgb_retrained/confusion_matrix.png)
 
-The DL pipeline is **more than 20× faster** than the full XGB pipeline.
+| GT \ Pred | NoJam | Chirp | NB | WB |
+|---|---|---|---|---|
+| NoJam | 0.9983 | 0.0002 | 0.0014 | 0.0000 |
+| Chirp | 0.0004 | 0.9996 | 0.0000 | 0.0000 |
+| NB | 0.0119 | 0.0015 | 0.9866 | 0.0000 |
+| WB | 0.0000 | 0.0000 | 0.0312 | 0.9688 |
 
----
-
-## 6.8 Accuracy vs Computational Cost Trade-Off
-
-| Model | Accuracy | Latency | Scalability |
-|------|----------|---------|-------------|
-| XGB-78 | Highest | High | Limited |
-| XGB-10 | Slightly lower | Medium | Moderate |
-| DL spectrogram | Comparable | Very low | Excellent |
-
-For long-duration road tests and continuous monitoring, computational cost becomes the dominant deployment constraint.
+Key note:
+- WB has only **32** samples; the single WB error is **WB → NB** (≈3.1%).
 
 ---
 
-## 6.9 Key Validation Findings
+### 6.3.3 XGB-10 (retrained)
 
-1. Synthetic-only training is insufficient for reliable WB detection
-2. Retraining corrects structural errors, not just marginal accuracy
-3. DL models benefit more strongly from retraining than XGB
-4. Feature reduction preserves most discriminative power
-5. DL enables real-time, multi-day inference at scale
+Row-normalized matrix (from stored CSVs):
+
+- Counts: `results/alt06001_eval_xgb_retrained_10feat/confusion_matrix_counts.csv`
+- Row %: `results/alt06001_eval_xgb_retrained_10feat/confusion_matrix_rowpct.csv`
+
+| GT \ Pred | NoJam | Chirp | NB | WB |
+|---|---|---|---|---|
+| NoJam | 0.9967 | 0.0014 | 0.0019 | 0.0000 |
+| Chirp | 0.0004 | 0.9996 | 0.0000 | 0.0000 |
+| NB | 0.0060 | 0.0015 | 0.9925 | 0.0000 |
+| WB | 0.0312 | 0.0000 | 0.7500 | 0.2188 |
+
+Key failure mode:
+- **WB → NB** dominates (≈75% of WB predicted as NB), yielding **low WB recall**.
 
 ---
 
-## 6.10 Final Conclusions
+### 6.3.4 DL spectrogram (synthetic-only)
 
-Validation on the Altus06 Day 1 dataset confirms that all three modelling approaches are viable after retraining. Feature-based models provide strong interpretability and diagnostic value, while the spectrogram-based DL model offers comparable accuracy with orders-of-magnitude lower computational cost.
+![DL synthetic row-normalized confusion matrix](../results/alt06001_eval_dl_synthetic/confusion_matrix_rownorm.png)
 
-These results justify a **hybrid modelling strategy**, where feature-based models support analysis and debugging, and DL models enable scalable, long-duration deployment.
+| GT \ Pred | NoJam | Chirp | NB | WB |
+|---|---|---|---|---|
+| NoJam | 0.6749 | 0.3248 | 0.0004 | 0.0000 |
+| Chirp | 0.0014 | 0.9940 | 0.0000 | 0.0046 |
+| NB | 0.0291 | 0.0328 | 0.6513 | 0.2869 |
+| WB | 0.0000 | 0.0000 | 0.0000 | 1.0000 |
+
+Key failure mode:
+- **NoJam → Chirp** is extremely frequent (≈32.5%), explaining the high FAR.
+
+---
+
+### 6.3.5 DL spectrogram (retrained)
+
+![DL retrained row-normalized confusion matrix](../results/alt06001_eval_dl_retrained/confusion_matrix_rownorm.png)
+
+| GT \ Pred | NoJam | Chirp | NB | WB |
+|---|---|---|---|---|
+| NoJam | 0.9974 | 0.0004 | 0.0022 | 0.0000 |
+| Chirp | 0.0004 | 0.9996 | 0.0000 | 0.0000 |
+| NB | 0.0015 | 0.0000 | 0.9985 | 0.0000 |
+| WB | 0.0000 | 0.0000 | 0.0000 | 1.0000 |
+
+---
+
+## 6.4 Computational performance (per block)
+
+These timings are taken from:
+- XGB: `results/alt06001_eval_xgb_*/summary.json` → `timing_summary`
+- DL: `results/alt06001_eval_dl_*/timing_summary.json`
+
+| Model | NPZ load (ms) | Feat. extract (ms) | Inference (ms) | Spectrogram (ms) | Total (ms) |
+|---|---|---|---|---|---|
+| XGB-78 (synthetic-only) | 0.576 | 26.553 | 2.676 | — | 31.657 |
+| XGB-78 (retrained) | 0.558 | 24.999 | 3.145 | — | 30.428 |
+| XGB-10 (retrained) | 0.523 | 22.098 | 2.149 | — | 24.770 |
+| DL spectrogram (synthetic-only) | 0.691 | — | 0.487 | 0.345 | 1.118 |
+| DL spectrogram (retrained) | 1.016 | — | 0.529 | 0.543 | 1.688 |
+
+Important notes:
+- DL timings were recorded with `device = "cuda"` (see `results/alt06001_eval_dl_*/summary.json`).
+- XGB timings are wall-clock on the machine used to run the script (device not explicitly recorded in the summary).
+
+---
+
+## 6.5 Behavior on `Interference` (2 blocks)
+
+`Interference` appears only twice in the label file. Results should not be over-interpreted.
+
+| Model | Rows in samples_eval.csv | Predictions on GT=Interference (2 blocks) |
+|---|---|---|
+| XGB-78 (synthetic-only) | 12689 | NoJam: 2 |
+| XGB-78 (retrained) | 12689 | NB: 1, NoJam: 1 |
+| XGB-10 (retrained) | 12687 | not present / filtered |
+| DL spectrogram (synthetic-only) | 12689 | NoJam: 1, Chirp: 1 |
+| DL spectrogram (retrained) | 12689 | NB: 1, Chirp: 1 |
+
+The 10-feature XGB evaluation produced a `samples_eval.csv` with **12,687** rows (i.e., the 2 `Interference` rows are not present there).
+
+---
+
+## 6.6 Key conclusions from validation
+
+1. **Domain gap is real and measurable**
+   - DL trained purely on synthetic spectrograms shows severe mismatch (NoJam→Chirp false alarms).
+   - XGB synthetic-only is more conservative (low FAR) but under-detects NB and partly WB.
+
+2. **Retraining on real data is decisive**
+   - Both XGB-78 and DL reach ~0.997–0.998 accuracy on the 4-class subset after retraining.
+
+3. **Feature reduction trades robustness**
+   - The 10-feature model improves speed but loses WB discrimination, suggesting WB requires the broader feature set (or explicit WB-focused augmentation / rebalancing).
+
+4. **WB metrics are statistically fragile**
+   - With **32** WB blocks, even 1–2 errors shift recall notably. Any claims about WB should be phrased with this in mind.
+
+---
+
+## 6.7 Reproducibility (exact files)
+
+To regenerate the reported metrics, use these files:
+
+- Per-sample predictions:
+  - `results/alt06001_eval_xgb_synthetic/samples_eval.csv`
+  - `results/alt06001_eval_xgb_retrained/samples_eval.csv`
+  - `results/alt06001_eval_xgb_retrained_10feat/samples_eval.csv`
+  - `results/alt06001_eval_dl_synthetic/samples_eval.csv`
+  - `results/alt06001_eval_dl_retrained/samples_eval.csv`
+
+- Summary + timing:
+  - `results/*/summary.json`
+  - `results/alt06001_eval_dl_*/timing_summary.json`

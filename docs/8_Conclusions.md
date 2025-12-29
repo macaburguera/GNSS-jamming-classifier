@@ -1,198 +1,109 @@
 # 8. Conclusions
 
-## 8.1 Scope of the Conclusions
+This document summarizes the measured outcomes of the project and updates any earlier conclusions that relied on approximate validation numbers.
 
-This document synthesizes the results obtained throughout the project, integrating:
-
-- Pipeline design decisions
-- Data generation and labelling strategies
-- Feature-based and deep learning models
-- Quantitative validation on labelled real data
-- Qualitative testing on long-duration in-the-wild recordings
-
-All conclusions are grounded in **measured results**, not assumptions.
+All quantitative statements below are grounded in:
+- `results/*/samples_eval.csv`
+- `results/*/summary.json`
+- `results/*/timing_summary.json` (DL)
 
 ---
 
-## 8.2 Summary of the Experimental Setup
+## 8.1 What worked best (on labelled real data)
 
-The final evaluation framework consists of:
+On the fixed validation dataset (**Altus06, 150 m, 12,689 blocks**), retraining on real labelled data produced near-ceiling performance for both approaches:
 
-- **5 models** evaluated on the same validation dataset:
-  - XGB-78 (synthetic-only)
-  - XGB-78 (retrained)
-  - XGB-10 (retrained)
-  - DL spectrogram (synthetic-only)
-  - DL spectrogram (retrained)
-- **12,689 labelled blocks** from Jammertest 2023 (Altus06, Day 1, 150 m)
-- **~15 days** of unlabelled highway data for test (Rodby roadtest)
+| Model | Acc (all) | Acc (4-class) | Macro-F1 (4-class) | FAR NoJam | Recall NB | Recall WB | Mean ms/block |
+|---|---|---|---|---|---|---|---|
+| XGB-78 (synthetic-only) | 0.913153 | 0.913297 | 0.620660 | 0.15% | 30.48% | 56.25% | 31.657 |
+| XGB-78 (retrained) | 0.997163 | 0.997320 | 0.992355 | 0.17% | 98.66% | 96.88% | 30.428 |
+| XGB-10 (retrained) | 0.994955 | 0.994955 | 0.833918 | 0.33% | 99.25% | 21.88% | 24.770 |
+| DL spectrogram (synthetic-only) | 0.744582 | 0.744699 | 0.599334 | 32.51% | 65.13% | 100.00% | 1.118 |
+| DL spectrogram (retrained) | 0.997872 | 0.998029 | 0.997375 | 0.26% | 99.85% | 100.00% | 1.688 |
 
-This structure enables isolation of:
-- Architecture effects (XGB vs DL)
-- Feature dimensionality effects
-- Retraining / domain adaptation effects
-- Computational scalability effects
+Key points:
+- **DL retrained** achieves the best overall balance (Macro-F1 ≈ 0.997 on 4 classes).
+- **XGB retrained** is essentially tied in accuracy, slightly below DL on Macro-F1.
+- **XGB-10 retrained** keeps NB strong but fails on WB; it is a clear speed/robustness trade.
 
 ---
 
-## 8.3 Key Quantitative Findings
+## 8.2 The most important technical lesson: synthetic-only is not enough
 
-### 8.3.1 Global Accuracy
+The project confirms a strong **synthetic → real domain gap**, and the gap is model-dependent:
 
-| Model | Accuracy |
-|------|----------|
-| XGB-78 (synthetic) | ≈ 0.985–0.99 |
-| XGB-78 (retrained) | **0.9972** |
-| XGB-10 (retrained) | ≈ 0.99 |
-| DL (synthetic) | ≈ 0.985–0.99 |
-| DL (retrained) | **0.9979** |
+- **DL (synthetic-only)**  
+  - Accuracy collapses to **~0.745** on real data.
+  - Dominant error: **NoJam → Chirp** (high false alarm rate on clean data).
 
-Retraining yields an absolute gain of **~0.7–1.2 percentage points**, but its true impact is revealed at the class level.
+- **XGB (synthetic-only)**  
+  - Accuracy remains **~0.913**, but Macro-F1 is only **~0.621** because:
+    - NB recall is **~0.305**
+    - WB recall is **~0.563**
+    - NB is often predicted as NoJam.
 
----
-
-### 8.3.2 Per-Class Recall (Post-Retraining)
-
-| Class | XGB-78 | XGB-10 | DL |
-|------|--------|--------|----|
-| NoJam | ~99.8% | ~99.7% | ~99.7% |
-| Chirp | ~99.96% | ~99.8% | ~99.96% |
-| NB | ~99.85% | ~99.3% | ~99.85% |
-| WB | ~97% | 100% | 100% |
-
-Key observations:
-
-- **Chirp interference** is consistently the easiest class to detect
-- **NB vs NoJam** remains the dominant ambiguity across all models
-- **WB detection** is highly sensitive to retraining with real data
+Practical interpretation:
+- If you want a detector that is usable in operational recordings, **real-data retraining (or strong domain randomization) is mandatory**.
 
 ---
 
-## 8.4 Effect of Synthetic-Only Training
+## 8.3 WB is a fragile class (in this dataset)
 
-Both XGB and DL models trained exclusively on synthetic (MATLAB-generated) data exhibit:
+WB appears only **32 times** (0.25%).
+This has two consequences:
 
-- Strong Chirp detection
-- Reasonable NB detection at high SNR
-- **Poor generalization to real WB interference**
-- Increased NB ↔ NoJam confusion
+1. **Metrics can look “perfect” by chance** (small-N effect).
+2. Feature selection decisions that do not preserve WB structure can break WB detection (seen in XGB-10).
 
-This demonstrates that **synthetic data alone is insufficient** to capture:
-
-- Real RF front-end effects
-- Noise coloration
-- Spectral irregularities present in operational environments
+Example from the 10-feature model:
+- WB recall drops to **~21.9%**, mainly because WB is classified as NB.
 
 ---
 
-## 8.5 Effect of Retraining (Domain Adaptation)
+## 8.4 Computational cost and deployment implications
 
-Retraining with real labelled data produces:
+Per-block mean timings (from the evaluation outputs):
 
-- WB recall improvement from unstable/poor to:
-  - ≈97% (XGB-78)
-  - 100% (DL, XGB-10)
-- Stabilization of NB detection
-- No degradation of Chirp detection
+| Model | NPZ load (ms) | Feat. extract (ms) | Inference (ms) | Spectrogram (ms) | Total (ms) |
+|---|---|---|---|---|---|
+| XGB-78 (synthetic-only) | 0.576 | 26.553 | 2.676 | — | 31.657 |
+| XGB-78 (retrained) | 0.558 | 24.999 | 3.145 | — | 30.428 |
+| XGB-10 (retrained) | 0.523 | 22.098 | 2.149 | — | 24.770 |
+| DL spectrogram (synthetic-only) | 0.691 | — | 0.487 | 0.345 | 1.118 |
+| DL spectrogram (retrained) | 1.016 | — | 0.529 | 0.543 | 1.688 |
 
-Retraining primarily corrects **structural errors**, not marginal ones, confirming the importance of domain adaptation.
+Interpretation:
+- **XGB** is dominated by feature extraction (≈22–26 ms in this configuration).
+- **DL** is extremely fast *in this measurement setup* (≈1–2 ms), because inference ran on CUDA (recorded in DL summaries).
 
----
-
-## 8.6 Feature Dimensionality Trade-Off
-
-Reducing the feature set from 78 to 10 yields:
-
-- Accuracy reduction of **≈1 percentage point**
-- Runtime reduction of **≈30%**
-- Preservation of most discriminative power
-
-| Model | Accuracy | Total Time |
-|------|----------|------------|
-| XGB-78 | 0.9972 | ~45 ms |
-| XGB-10 | ≈0.99 | ~31 ms |
-
-This confirms that a small, carefully selected feature subset captures the majority of useful information.
+Deployment note:
+- If CUDA is unavailable, DL throughput should be re-profiled on CPU. The current timings are still a strong indicator that the spectrogram pipeline is computationally lightweight compared to the 78-feature pipeline.
 
 ---
 
-## 8.7 Computational Cost and Scalability
+## 8.5 What to improve next
 
-### Per-Block Processing Time
+1. **Broader validation**
+   - More days, more receivers, more distances, and more WB examples.
+   - WB performance should be validated on larger counts before any strong claim.
 
-| Model | Total Time / Block |
-|------|--------------------|
-| XGB-78 | ~45 ms |
-| XGB-10 | ~31 ms |
-| DL spectrogram | **~1.8 ms** |
+2. **Better synthetic-to-real transfer**
+   - Increase realism of the synthetic generator (front-end effects, noise coloration, AGC, frequency-dependent artifacts).
+   - Consider domain randomization and augmentation targeted at the *observed* failure modes (e.g., NoJam→Chirp false alarms for DL).
 
-The DL pipeline is **>20× faster** than the full feature-based pipeline.
+3. **Thresholding / veto logic**
+   - Current evaluation ran with veto disabled (see `veto` entries in summaries).
+   - A calibrated veto could reduce false positives further, especially for operational “scan” use.
 
-### Implications
-
-- XGB models are suitable for:
-  - Offline analysis
-  - Diagnostics
-  - Feature interpretability
-- DL models are required for:
-  - Long-duration recordings
-  - Real-time or near-real-time monitoring
-  - Multi-band continuous scanning
+4. **Feature set design**
+   - The 10-feature model shows that aggressive reduction can harm specific classes.
+   - A class-aware selection process (or adding WB-specific features) is the safer path if the goal is a minimal XGB model.
 
 ---
 
-## 8.8 Test Phase Findings (Rodby Roadtest)
+## 8.6 Bottom line
 
-Testing on ~15 days of unlabelled highway data demonstrates that:
-
-- The DL model operates stably over long durations
-- False positives are limited
-- Persistent narrowband interference is consistently detected around L1
-- No sustained wideband jamming is observed
-
-These observations confirm **operational robustness**, beyond controlled validation.
-
----
-
-## 8.9 Failure Modes and Physical Interpretation
-
-The dominant residual error across all models is:
-
-- **Low-SNR NB ↔ NoJam confusion**
-
-This reflects **physical signal ambiguity**, not modelling deficiencies.  
-In such cases, spectral energy is close to the noise floor, making perfect separation theoretically impossible.
-
----
-
-## 8.10 Recommended Usage Strategy
-
-Based on the results:
-
-- **XGB-78**
-  - Best for interpretability and feature analysis
-  - Suitable for offline studies and diagnostics
-
-- **XGB-10**
-  - Best accuracy–efficiency compromise among feature-based models
-  - Suitable for constrained environments
-
-- **DL spectrogram**
-  - Best choice for deployment
-  - Required for scalable, long-duration monitoring
-
-A **hybrid strategy** is recommended, combining feature-based models for analysis and DL models for operational scanning.
-
----
-
-## 8.11 Final Conclusions
-
-This project demonstrates that:
-
-1. GNSS jamming detection from raw baseband data is feasible and robust
-2. Synthetic data is valuable but insufficient on its own
-3. Retraining with real data is essential for reliable wideband detection
-4. Feature reduction preserves most discriminative information
-5. Deep learning enables orders-of-magnitude improvements in scalability
-
-Taken together, these results validate the overall design choices and support the use of **spectrogram-based deep learning models** as the primary solution for real-world GNSS interference monitoring, with feature-based models serving as complementary analytical tools.
+- **Retraining on real labelled data is the decisive step** for both ML (XGB) and DL (spectrogram CNN) in this pipeline.
+- **DL retrained** offers the best combination of accuracy and throughput (in the measured CUDA setup).
+- **XGB retrained** remains attractive when interpretability and classical feature reasoning matter, at the cost of higher per-block compute.
+- Any “WB performance claim” must be stated carefully due to the small sample count in the current validation dataset.
